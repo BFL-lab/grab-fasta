@@ -1,0 +1,360 @@
+#!/usr/bin/perl -w -- -*-Perl-*-
+
+##############################################################################
+#
+#                                grab-seq.pl
+#
+# DESCRIPTION:
+# This program scans one or many FASTA target files, and extract
+# all regions that matches exactly a query sequence, with optionally
+# flanking regions too.
+#
+##############################################################################
+
+##############################################################################
+#                                                                            #
+#                       CONFIDENTIAL & PROPRIETARY                           #
+#       Nothing herein is to be disclosed in any way without the prior       #
+#                 express written permission of BioneQ                       #
+#                                                                            #
+#          Copyright 2005 Pierre Rioux, All rights reserved.                 #
+#                                                                            #
+##############################################################################
+#
+#    $Id: grab-seq,v 1.1 2007/05/07 17:18:41 riouxp Exp $
+#
+#    $Log: grab-seq,v $
+#    Revision 1.1  2007/05/07 17:18:41  riouxp
+#    New utility.
+#
+
+##########################
+# Initialization section #
+##########################
+
+require 5.00;
+use strict;
+use vars qw( $VERSION $RCS_VERSION $DEBUG );
+use IO::File;
+
+# Default umask
+umask 027;
+
+# Program's name and version number.
+$RCS_VERSION='$Id: grab-seq,v 1.1 2007/05/07 17:18:41 riouxp Exp $';
+($VERSION) = ($RCS_VERSION =~ m#,v ([\w\.]+)#);
+my ($BASENAME) = ($0 =~ /([^\/]+)$/);
+
+# Get login name.
+my $USER=getpwuid($<) || getlogin || die "Can't find USER from environment!\n";
+
+##################################
+# Global variables and constants #
+##################################
+
+$DEBUG=0;
+my $BEFORE=0;
+my $AFTER=0;
+my $QUERYFILE="";
+my $OUTFILE="-";
+my @SEARCHFILES=();
+my $LINEBUFFER="";
+
+my $BLOCKINGFACTOR=50000000; # 50 million bases
+
+#####################################
+# Command-Line Arguments Processing #
+#####################################
+
+sub Usage {
+    print STDERR <<MESSAGE;
+$BASENAME $VERSION
+
+Usage: $BASENAME [-b beforelen] [-a afterlen] [-o outfile] -q queryfile file1 file2 file3...
+      
+where
+       -b is the length of the 5' flanking region (mnemo: [B]efore; default: 0)
+       -a is the length of the 3' flanking region (mnemo: [A]fter; default: 0)
+       -o is the name of the output file (default: stdout)
+       -q queryfile is a file containing a single FASTA seq to search
+       file1, file2 etc are the set of target files to search,
+           in FASTA format; if they are compressed with GZIP and
+           end with a .gz extension, they will be dynamically uncompressed
+
+Example:
+       $BASENAME -b 5 -a 7 -q seq.fa chr1.fa chr2.fa chr3.fa.gz
+       will search for the sequence stored in seq.fa in the three
+       chromosome files chr1.fa .. chr3.fa (where 1 and 3 are compressed).
+
+MESSAGE
+    exit 20;
+}
+
+for (;@ARGV;) {
+    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@baqX])(.*)$/o);
+    last if ! defined $opt;
+    if ($opt =~ /[baqX]/ && $arg eq "") {
+        if (@ARGV < 2) {
+            print "Argument required for switch \"-$opt\".\n";
+            exit 1;
+        }
+        shift @ARGV;
+        $arg=$ARGV[0];
+    }
+
+    $DEBUG=(defined($arg) ? $arg : 1)             if $opt eq '@';
+    $BEFORE=$arg                                  if $opt eq 'b';
+    $AFTER=$arg                                   if $opt eq 'a';
+    $OUTFILE=$arg                                 if $opt eq 'o';
+    $QUERYFILE=$arg                               if $opt eq 'q';
+    $BLOCKINGFACTOR=$arg                          if $opt eq 'X';
+
+    shift @ARGV;
+}
+
+###########################################
+# Validate remaining command-line options #
+###########################################
+
+@SEARCHFILES=@ARGV;
+
+&Usage unless $QUERYFILE;
+
+die "Before value '-b' is incorrect or much to large!\n"
+    unless $BEFORE =~ m#^[1-9]\d*$# && $BEFORE < 20000;
+die "After value '-a' is incorrect or much to large!\n"
+    unless $AFTER =~ m#^[1-9]\d*$# && $AFTER < 20000;
+
+################
+# Trap Signals #
+################
+
+sub SigCleanup { # private
+     die "\nExiting: received signal \"" . $_[0] . "\".\n";
+     # Note that some cleanup will be performed in the END block at this point.
+}
+$SIG{'INT'}  = \&SigCleanup;
+$SIG{'TERM'} = \&SigCleanup;
+$SIG{'HUP'}  = \&SigCleanup;
+$SIG{'QUIT'} = \&SigCleanup;
+$SIG{'PIPE'} = \&SigCleanup;
+
+###############################
+#   M A I N   P R O G R A M   #
+###############################
+
+my ($query,$revquery) = &ReadQuerySeq($QUERYFILE);
+my $TOTLEN = length($query) + $BEFORE + $AFTER;
+my $OUTFH = new IO::File ">$OUTFILE"
+    or die "Cannot write to output file '$OUTFILE': $!\n";
+
+foreach my $file (@SEARCHFILES) {
+    &StreamSearch($file,$query,$revquery);
+}
+
+exit 0;
+
+#############################
+#   S U B R O U T I N E S   #
+#############################
+
+sub ReadQuerySeq {
+    my $file = shift;
+    my $fh = new IO::File "<$file"
+        or die "Cannot read from search file '$file': $!\n";
+    my $seq = "";
+    my $header = "";
+    while (my $line = <$fh>) {
+        next if $line =~ m#^\s*$|^\s*;#;
+        if ($line =~ m#^>\s*(\S*.*\S)#) {
+            die "Error: there's more than a single sequence in the query file?\n"
+                if $header ne "";
+            $header = $1;
+            next;
+        }
+        $seq .= $line;
+    }
+    $seq =~ tr/a-zA-Z\000-\100\133-\140\173-\277/A-ZA-Z/d;
+    my $revseq = reverse($seq);
+    $revseq =~ tr/ACGT/TGCA/;
+    ($seq,$revseq);
+}
+
+sub StreamSearch {
+    my ($file,$query,$revquery) = @_;
+
+    my $fileopen = ($file =~ m#\.gz$#) ? "gunzip -c $file|" : "<$file";
+
+    my $fh = new IO::File "$fileopen" or die "Cannot read from search file '$file': $!\n";
+    print "Processing file '$file'.\n" if $DEBUG;
+
+    my $seq = "";
+    my $offset = 0;
+    my $contigname="";
+
+    for (;;) {
+        my ($newseq,$newname,$isend) = &ReadBlock($fh);
+        return if $newseq eq ""; # means EOF
+        if ($newname) {
+            $seq = "";
+            $offset = 0;
+            $contigname = $newname;
+        }
+        $seq .= $newseq;
+
+        print "READ BLOCK OF LENGTH ",length($newseq),", NAME=$newname ISEND=$isend\n" if $DEBUG;
+        my $lastbaseF = &ReportMatches(\$seq,"F",$query,   $contigname,$isend,$offset);
+        my $lastbaseR = &ReportMatches(\$seq,"R",$revquery,$contigname,$isend,$offset);
+
+        next if $isend;
+
+        my $remainF = length($seq) - 1 - $lastbaseF;
+        my $remainR = length($seq) - 1 - $lastbaseR;
+        my $minremain = $remainF < $remainR ? $remainF : $remainR; # min
+        my $suffix  = $TOTLEN;
+        $suffix = $minremain if $minremain < $suffix;
+
+        $offset += length($seq)-$suffix;
+        $seq = $suffix ? substr($seq,-$suffix) : "";
+    }
+
+    $fh->close();
+}
+
+sub ReadBlock {
+    my $fh = shift;
+
+    my @seq = ();
+    my $cnt = 0;
+    my $contig = "";
+    my $endblock = 0;
+
+    for (;;) {
+        my $line = $LINEBUFFER ne "" ? $LINEBUFFER : <$fh>;
+        $LINEBUFFER="";
+        if (!defined($line)) {
+            $endblock=1;
+            last;
+        }
+        next if $line =~ m#^\s*$#;
+        if ($line =~ m#^>\s*(\S*.*\S)#) {
+            if (!@seq) {
+                $contig = $1;
+                next;
+            }
+            $LINEBUFFER=$line;
+            $endblock=1;
+            last;
+        }
+        push(@seq,$line);
+        $cnt += length($line);
+        next if $cnt <= $BLOCKINGFACTOR; # not yet at blocking factor size
+
+        # Alright, it could be that unfortunately, our blocking factor
+        # matches exactly the seq length, so we have to check for more seq lines,
+        # and skip over blank lines while we're at it.
+        for (;;) {
+            $line = <$fh>;
+            if (!defined($line)) {
+                 $endblock=1;
+                 last;
+            }
+            next if $line =~ m#^\s*$#;
+            if ($line =~ m#^>#) { # a new header? So we must warn calling context
+                 $endblock=1;
+            }
+            $LINEBUFFER=$line; # Whatever it is, we must keep it
+            last;
+        }
+
+        last; # we've reached blocking factor size
+    }
+
+    my $seq = join("",@seq);
+    $seq =~ tr/a-zA-Z\000-\100\133-\140\173-\277/A-ZA-Z/d;
+    ($seq,$contig,$endblock);
+}
+
+sub ReportMatches {
+    my ($seqR,$strand,$query,$contig,$isend,$offset) = @_;
+
+    my $pos      = 0;
+    my $lastend  = -1;
+    my $qulen    = length($query);
+    my $blocklen = length($$seqR);
+
+    # Length variables for BEFORE and AFTER sections
+    my ($b,$a) = ($BEFORE,$AFTER);
+    ($b,$a) = ($a,$b) if $strand eq "R";
+
+    for (;;) {
+        my $index = index($$seqR,$query,$pos);
+        return $lastend if $index < 0;
+
+        # If match overlap end of current block, postpone for next batch
+        last if !$isend && $index+$qulen+$a > $blocklen;
+
+        # Extract the match itself
+        my $match = substr($$seqR,$index,$qulen);
+        $pos      = $index + $qulen;
+        $lastend  = $pos if $pos > $lastend;
+
+        # Extract the BEFORE section
+        my ($bpos,$blen) = ($index - $b,$b);
+        my $bmissing = 0;
+        if ($bpos < 0) {
+            $bmissing = -$bpos;
+            $blen -= $bmissing;
+            $bpos = 0;
+            die "Internal error: bmissing $bmissing bpos $bpos blen $blen\n" if $blen < 0;
+        }
+        my $bstring = substr($$seqR,$bpos,$blen);
+        $bstring = ("-" x $bmissing) . $bstring if $bmissing > 0;
+
+        # Extract the AFTER section
+        my ($apos,$alen) = ($index + $qulen,$a);
+        my $amissing = 0;
+        if ($apos+$alen > $blocklen) {
+            $amissing = $apos+$alen-$blocklen;
+            $alen -= $amissing;
+            die "Internal error: amissing $amissing apos $apos alen $alen\n" if $alen < 0;
+        }
+        my $astring = substr($$seqR,$apos,$alen);
+        $astring = ("-" x $amissing) . $astring if $amissing > 0;
+
+#        # Report
+#        print ">$contig ",
+#              $blen ?  ( "BEFORE(" . ($offset+$bpos+1)  . "..". ($offset+$bpos+$blen)   . ") " ) : ( "BEFORE(none)" ) ,
+#                         "MATCH("  . ($offset+$index+1) . "..". ($offset+$index+$qulen) . ") " ,
+#              $alen ?  ( "AFTER("  . ($offset+$apos+1)  . "..". ($offset+$apos+$alen)   . ") " ) : ( "AFTER(none)" ) ,
+#              "\n";
+#        print $bstring,"\n";
+#        print $match,"\n";
+#        print $astring,"\n";
+
+         my ($mfrom,$mto) = ($offset+$index+1,$offset+$index+$qulen);  # match coordinates
+         my ($rfrom,$rto) = ($offset+$bpos+1 ,$offset+$apos+$alen);    # whole region coords
+         my $prettystrand = "FW";
+         my $totseq = lc($bstring) . uc($match) . lc($astring);
+         if ($strand eq "R") {
+             ($mfrom,$mto) = ($mto,$mfrom);
+             ($rfrom,$rto) = ($rto,$rfrom);
+             $prettystrand = "RC";
+             $totseq = reverse $totseq;
+             $totseq =~ tr/acgtACGT/tgcaTGCA/; # keep case!
+         }
+
+         my $width = 50;
+         print $OUTFH ">$contig|$prettystrand|$mfrom..$mto (extracted: $rfrom..$rto)\n";
+         for (my $i=0;$i<length($totseq);$i+=$width) {
+             my $remain = $i + $width <= length($totseq) ? $width : length($totseq)-$i;
+             print $OUTFH substr($totseq,$i,$remain),"\n";
+         }
+         print "\n";
+
+
+    }
+
+    return $lastend;
+
+}
