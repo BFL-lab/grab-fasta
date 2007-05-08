@@ -21,9 +21,13 @@
 #                                                                            #
 ##############################################################################
 #
-#    $Id: grab-seq,v 1.3 2007/05/08 00:18:20 riouxp Exp $
+#    $Id: grab-seq,v 1.4 2007/05/08 16:56:49 riouxp Exp $
 #
 #    $Log: grab-seq,v $
+#    Revision 1.4  2007/05/08 16:56:49  riouxp
+#    Fixed detection of overlapping patterns.
+#    Added option -c to allow lowercase/uppercase in output.
+#
 #    Revision 1.3  2007/05/08 00:18:20  riouxp
 #    Fixed processing of -b and -a.
 #
@@ -48,7 +52,7 @@ use IO::File;
 umask 027;
 
 # Program's name and version number.
-$RCS_VERSION='$Id: grab-seq,v 1.3 2007/05/08 00:18:20 riouxp Exp $';
+$RCS_VERSION='$Id: grab-seq,v 1.4 2007/05/08 16:56:49 riouxp Exp $';
 ($VERSION) = ($RCS_VERSION =~ m#,v ([\w\.]+)#);
 my ($BASENAME) = ($0 =~ /([^\/]+)$/);
 
@@ -66,6 +70,7 @@ my $QUERYFILE="";
 my $OUTFILE="-";
 my @SEARCHFILES=();
 my $LINEBUFFER="";
+my $MIXEDCASE=0;
 
 my $BLOCKINGFACTOR=50000; # 50 thousand bases
 
@@ -80,10 +85,12 @@ $BASENAME $VERSION
 Usage: $BASENAME [-b beforelen] [-a afterlen] [-o outfile] -q queryfile file1 file2 file3...
       
 where
-       -b is the length of the 5' flanking region (mnemo: [B]efore; default: 0)
-       -a is the length of the 3' flanking region (mnemo: [A]fter; default: 0)
-       -o is the name of the output file (default: stdout)
-       -q queryfile is a file containing a single FASTA seq to search
+       -b len : is the length of the 5' flanking region (mnemo: [B]efore; default: 0)
+       -a len : is the length of the 3' flanking region (mnemo: [A]fter; default: 0)
+       -o file : is the name of the output file (default: stdout)
+       -q queryfile : is a file containing a single FASTA seq to search
+       -c : when specified, the output will contain mixed uppercase
+            and lowercase characters for the extracted regions
        file1, file2 etc are the set of target files to search,
            in FASTA format; if they are compressed with GZIP and
            end with a .gz extension, they will be dynamically uncompressed
@@ -98,7 +105,7 @@ MESSAGE
 }
 
 for (;@ARGV;) {
-    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@baqoX])(.*)$/o);
+    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@baqoXc])(.*)$/o);
     last if ! defined $opt;
     if ($opt =~ /[baqoX]/ && $arg eq "") {
         if (@ARGV < 2) {
@@ -115,6 +122,7 @@ for (;@ARGV;) {
     $OUTFILE=$arg                                 if $opt eq 'o';
     $QUERYFILE=$arg                               if $opt eq 'q';
     $BLOCKINGFACTOR=$arg                          if $opt eq 'X';
+    $MIXEDCASE=1                                  if $opt eq 'c';
 
     shift @ARGV;
 }
@@ -198,6 +206,7 @@ sub StreamSearch {
     my $seq = "";
     my $offset = 0;
     my $contigname="";
+    my ($posF,$posR) = (0,0);
 
     for (;;) {
         my ($newseqR,$newname,$isend) = &ReadBlock($fh);
@@ -205,24 +214,23 @@ sub StreamSearch {
         if ($newname) {
             $seq = "";
             $offset = 0;
+            ($posF,$posR) = (0,0);
             $contigname = $newname;
         }
         $seq .= $$newseqR;
 
         print STDERR "READ BLOCK OF LENGTH ",length($$newseqR),", NAME=$newname ISEND=$isend\n" if $DEBUG > 1;
-        my $lastbaseF = &ReportMatches(\$seq,"F",$query,   $contigname,$isend,$offset);
-        my $lastbaseR = &ReportMatches(\$seq,"R",$revquery,$contigname,$isend,$offset);
+        my $lastbaseF = &ReportMatches(\$seq,"F",$query,   $contigname,$isend,$offset,$posF);
+        my $lastbaseR = &ReportMatches(\$seq,"R",$revquery,$contigname,$isend,$offset,$posR);
 
         next if $isend;
 
-        my $remainF = length($seq) - 1 - $lastbaseF;
-        my $remainR = length($seq) - 1 - $lastbaseR;
-        my $minremain = $remainF < $remainR ? $remainF : $remainR; # min
-        my $suffix  = $TOTLEN;
-        $suffix = $minremain if $minremain < $suffix;
+        my $offsetadd = length($seq)-$TOTLEN;
+        $posF = $lastbaseF >= $offsetadd ? $lastbaseF-$offsetadd : 0;
+        $posR = $lastbaseR >= $offsetadd ? $lastbaseR-$offsetadd : 0;
 
-        $offset += length($seq)-$suffix;
-        $seq = $suffix ? substr($seq,-$suffix) : "";
+        $offset += $offsetadd;
+        $seq = substr($seq,-$TOTLEN);
     }
 
     $fh->close();
@@ -284,9 +292,9 @@ sub ReadBlock {
 }
 
 sub ReportMatches {
-    my ($seqR,$strand,$query,$contig,$isend,$offset) = @_;
+    my ($seqR,$strand,$query,$contig,$isend,$offset,$startpos) = @_;
 
-    my $pos      = 0;
+    my $pos      = $startpos || 0;
     my $lastend  = -1;
     my $qulen    = length($query);
     my $blocklen = length($$seqR);
@@ -304,7 +312,7 @@ sub ReportMatches {
 
         # Extract the match itself
         my $match = substr($$seqR,$index,$qulen);
-        $pos      = $index + $qulen;
+        $pos      = $index + 1; # supports overlaps
         $lastend  = $pos if $pos > $lastend;
 
         # Extract the BEFORE section
@@ -343,7 +351,9 @@ sub ReportMatches {
          my ($mfrom,$mto) = ($offset+$index+1,$offset+$index+$qulen);  # match coordinates
          my ($rfrom,$rto) = ($offset+$bpos+1 ,$offset+$apos+$alen);    # whole region coords
          my $prettystrand = "FW";
-         my $totseq = lc($bstring) . uc($match) . lc($astring);
+         my $totseq = $MIXEDCASE
+                      ? lc($bstring) . uc($match) . lc($astring)
+                      : $bstring . $match . $astring;
          if ($strand eq "R") {
              ($mfrom,$mto) = ($mto,$mfrom);
              ($rfrom,$rto) = ($rto,$rfrom);
