@@ -21,9 +21,14 @@
 #                                                                            #
 ##############################################################################
 #
-#    $Id: grab-seq,v 1.4 2007/05/08 16:56:49 riouxp Exp $
+#    $Id: grab-seq,v 1.5 2007/05/08 21:00:58 riouxp Exp $
 #
 #    $Log: grab-seq,v $
+#    Revision 1.5  2007/05/08 21:00:58  riouxp
+#    Now supports supplying the query sequence directly on the
+#    command-line, using -q (it autodetects whether it's a file
+#    or the seq itself).
+#
 #    Revision 1.4  2007/05/08 16:56:49  riouxp
 #    Fixed detection of overlapping patterns.
 #    Added option -c to allow lowercase/uppercase in output.
@@ -52,7 +57,7 @@ use IO::File;
 umask 027;
 
 # Program's name and version number.
-$RCS_VERSION='$Id: grab-seq,v 1.4 2007/05/08 16:56:49 riouxp Exp $';
+$RCS_VERSION='$Id: grab-seq,v 1.5 2007/05/08 21:00:58 riouxp Exp $';
 ($VERSION) = ($RCS_VERSION =~ m#,v ([\w\.]+)#);
 my ($BASENAME) = ($0 =~ /([^\/]+)$/);
 
@@ -88,7 +93,8 @@ where
        -b len : is the length of the 5' flanking region (mnemo: [B]efore; default: 0)
        -a len : is the length of the 3' flanking region (mnemo: [A]fter; default: 0)
        -o file : is the name of the output file (default: stdout)
-       -q queryfile : is a file containing a single FASTA seq to search
+       -q queryfile : is a file containing a single FASTA seq to search;
+          alternatively, it can be the sequence itself as in "-q AGTAGTAGCT"
        -c : when specified, the output will contain mixed uppercase
             and lowercase characters for the extracted regions
        file1, file2 etc are the set of target files to search,
@@ -175,24 +181,30 @@ exit 0;
 
 sub ReadQuerySeq {
     my $file = shift;
-    my $fh = new IO::File "<$file"
-        or die "Cannot read from search file '$file': $!\n";
+
     my $seq = "";
-    my $header = "";
-    while (my $line = <$fh>) {
-        next if $line =~ m#^\s*$|^\s*;#;
-        if ($line =~ m#^>\s*(\S*.*\S)#) {
-            die "Error: there's more than a single sequence in the query file?\n"
-                if $header ne "";
-            $header = $1;
-            next;
+
+    if (my $fh = new IO::File "<$file") {
+        my $header = "";
+        while (my $line = <$fh>) {
+            next if $line =~ m#^\s*$|^\s*;#;
+            if ($line =~ m#^>\s*(\S*.*\S)#) {
+                die "Error: there's more than a single sequence in the query file?\n"
+                    if $header ne "";
+                $header = $1;
+                next;
+            }
+            $seq .= $line;
         }
-        $seq .= $line;
+    } else {
+        $seq = $file; # filename is the seq itself!
     }
+
     $seq =~ tr/a-zA-Z\000-\100\133-\140\173-\277/A-ZA-Z/d;
     my $revseq = reverse($seq);
     $revseq =~ tr/ACGT/TGCA/;
     ($seq,$revseq);
+
 }
 
 sub StreamSearch {
