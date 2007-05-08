@@ -21,9 +21,13 @@
 #                                                                            #
 ##############################################################################
 #
-#    $Id: grab-seq,v 1.1 2007/05/07 17:18:41 riouxp Exp $
+#    $Id: grab-seq,v 1.2 2007/05/08 00:07:34 riouxp Exp $
 #
 #    $Log: grab-seq,v $
+#    Revision 1.2  2007/05/08 00:07:34  riouxp
+#    Fixed option -o; improved output in debug mode; performance
+#    improvements using empirical tests for blocking factor.
+#
 #    Revision 1.1  2007/05/07 17:18:41  riouxp
 #    New utility.
 #
@@ -41,7 +45,7 @@ use IO::File;
 umask 027;
 
 # Program's name and version number.
-$RCS_VERSION='$Id: grab-seq,v 1.1 2007/05/07 17:18:41 riouxp Exp $';
+$RCS_VERSION='$Id: grab-seq,v 1.2 2007/05/08 00:07:34 riouxp Exp $';
 ($VERSION) = ($RCS_VERSION =~ m#,v ([\w\.]+)#);
 my ($BASENAME) = ($0 =~ /([^\/]+)$/);
 
@@ -60,7 +64,7 @@ my $OUTFILE="-";
 my @SEARCHFILES=();
 my $LINEBUFFER="";
 
-my $BLOCKINGFACTOR=50000000; # 50 million bases
+my $BLOCKINGFACTOR=50000; # 50 thousand bases
 
 #####################################
 # Command-Line Arguments Processing #
@@ -91,9 +95,9 @@ MESSAGE
 }
 
 for (;@ARGV;) {
-    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@baqX])(.*)$/o);
+    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@baqoX])(.*)$/o);
     last if ! defined $opt;
-    if ($opt =~ /[baqX]/ && $arg eq "") {
+    if ($opt =~ /[baqoX]/ && $arg eq "") {
         if (@ARGV < 2) {
             print "Argument required for switch \"-$opt\".\n";
             exit 1;
@@ -186,23 +190,23 @@ sub StreamSearch {
     my $fileopen = ($file =~ m#\.gz$#) ? "gunzip -c $file|" : "<$file";
 
     my $fh = new IO::File "$fileopen" or die "Cannot read from search file '$file': $!\n";
-    print "Processing file '$file'.\n" if $DEBUG;
+    print STDERR "Processing file '$file'.\n" if $DEBUG;
 
     my $seq = "";
     my $offset = 0;
     my $contigname="";
 
     for (;;) {
-        my ($newseq,$newname,$isend) = &ReadBlock($fh);
-        return if $newseq eq ""; # means EOF
+        my ($newseqR,$newname,$isend) = &ReadBlock($fh);
+        return if $$newseqR eq ""; # means EOF
         if ($newname) {
             $seq = "";
             $offset = 0;
             $contigname = $newname;
         }
-        $seq .= $newseq;
+        $seq .= $$newseqR;
 
-        print "READ BLOCK OF LENGTH ",length($newseq),", NAME=$newname ISEND=$isend\n" if $DEBUG;
+        print STDERR "READ BLOCK OF LENGTH ",length($$newseqR),", NAME=$newname ISEND=$isend\n" if $DEBUG > 1;
         my $lastbaseF = &ReportMatches(\$seq,"F",$query,   $contigname,$isend,$offset);
         my $lastbaseR = &ReportMatches(\$seq,"R",$revquery,$contigname,$isend,$offset);
 
@@ -246,6 +250,7 @@ sub ReadBlock {
             $endblock=1;
             last;
         }
+        $line =~ tr/a-zA-Z\000-\100\133-\140\173-\277/A-ZA-Z/d;
         push(@seq,$line);
         $cnt += length($line);
         next if $cnt <= $BLOCKINGFACTOR; # not yet at blocking factor size
@@ -271,8 +276,8 @@ sub ReadBlock {
     }
 
     my $seq = join("",@seq);
-    $seq =~ tr/a-zA-Z\000-\100\133-\140\173-\277/A-ZA-Z/d;
-    ($seq,$contig,$endblock);
+    #$seq =~ tr/a-zA-Z\000-\100\133-\140\173-\277/A-ZA-Z/d; # not needed anymore
+    (\$seq,$contig,$endblock);
 }
 
 sub ReportMatches {
@@ -350,7 +355,7 @@ sub ReportMatches {
              my $remain = $i + $width <= length($totseq) ? $width : length($totseq)-$i;
              print $OUTFH substr($totseq,$i,$remain),"\n";
          }
-         print "\n";
+         print $OUTFH "\n";
 
 
     }
