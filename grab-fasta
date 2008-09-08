@@ -1,0 +1,277 @@
+#!/usr/bin/perl -w -- -*-Perl-*-
+
+##############################################################################
+#
+#                                grab-fasta
+#
+# DESCRIPTION:
+# Extracts a subset of the sequences of a FASTA file into another file.
+#
+##############################################################################
+
+##############################################################################
+#                                                                            #
+#                       CONFIDENTIAL & PROPRIETARY                           #
+#       Nothing herein is to be disclosed in any way without the prior       #
+#                 express written permission of BioneQ                       #
+#                                                                            #
+#          Copyright 2005 Pierre Rioux, All rights reserved.                 #
+#                                                                            #
+##############################################################################
+#
+#    $Id: grab-fasta,v 1.1 2008/09/08 21:01:36 riouxp Exp $
+#
+#    $Log: grab-fasta,v $
+#    Revision 1.1  2008/09/08 21:01:36  riouxp
+#    Added to CVS.
+#
+#    Revision 1.1  2006/01/13 18:14:28  riouxp
+#    New utility fro Franz.
+#
+#
+
+##########################
+# Initialization section #
+##########################
+
+require 5.00;
+use strict;
+use IO::File;
+use vars qw( $VERSION $RCS_VERSION $DEBUG );
+
+# Default umask
+umask 027;
+
+# Program's name and version number.
+$RCS_VERSION='$Id: grab-fasta,v 1.1 2008/09/08 21:01:36 riouxp Exp $';
+($VERSION) = ($RCS_VERSION =~ m#,v ([\w\.]+)#);
+my ($BASENAME) = ($0 =~ /([^\/]+)$/);
+
+# Get login name.
+my $USER=getpwuid($<) || getlogin || die "Can't find USER from environment!\n";
+
+##################################
+# Global variables and constants #
+##################################
+
+$DEBUG=0;
+my $INTERACTIVE=0;
+my $INFASTA="";
+my $OUTFASTA="";
+my $SELECTFILE="";
+my $SUBSTRINGS=0;
+
+#####################################
+# Command-Line Arguments Processing #
+#####################################
+
+sub Usage {
+    print STDERR "This is $BASENAME $VERSION\n",
+                 "\n",
+                 "This program extracts a subset of sequences from a FASTA file and\n",
+                 "stores this subset in a new file. Sequences are selected by specifying\n",
+                 "a list of exact FASTA header, or a list of specific substrings too look\n",
+                 "for in the headers of the input FASTA file.\n",
+                 "\n",
+                 "Usage: $BASENAME -i       # Interactive session\n",
+                 "   or  $BASENAME -f infasta [-H headerfile|-S stringfile] -o outfasta\n",
+                 "\n",
+                 "where:\n",
+                 "\n",
+                 "       -f infasta       is an file containing your input FASTA sequences,\n",
+                 "       -o outfasta      is the file where your output will be created,\n",
+                 "\n",
+                 "and you need to specify ONLY ONE OF -H or -S:\n",
+                 "\n",
+                 "       -H headerfile    is a file containing exact FASTA headers to extract\n",
+                 "       -S stringfile    is a file containing the selection substrings.\n",
+                 "\n",
+                 "NOTE: you can use a single dash ('-') for -f and -o, and in that case the\n",
+                 "      program will use STDIN and STDOUT respectively.\n";
+    exit 20;
+}
+
+for (;@ARGV;) {
+    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@ifoHS])(.*)$/o);
+    last if ! defined $opt;
+    if ($opt =~ /[foHS]/ && $arg eq "") {
+        if (@ARGV < 2) {
+            print "Argument required for switch \"-$opt\".\n";
+            exit 1;
+        }
+        shift @ARGV;
+        $arg=$ARGV[0];
+    }
+
+    $DEBUG=(defined($arg) ? $arg : 1)                if $opt eq '@';
+    $INTERACTIVE=1                                   if $opt eq 'i';
+    $INFASTA=$arg                                    if $opt eq 'f';
+    $OUTFASTA=$arg                                   if $opt eq 'o';
+    ($SELECTFILE,$SUBSTRINGS)=($arg,($SUBSTRINGS|1)) if $opt eq 'H';
+    ($SELECTFILE,$SUBSTRINGS)=($arg,($SUBSTRINGS|2)) if $opt eq 'S';
+
+    shift @ARGV;
+}
+
+###########################################
+# Validate remaining command-line options #
+###########################################
+
+&Usage if @ARGV > 0;
+if (!$INTERACTIVE) {
+    &Usage if !$INFASTA && !$OUTFASTA && !$SELECTFILE; # no arg at all
+    if (!$INFASTA) {
+        print STDERR "Missing value for -f\n"; exit 0;
+    }
+    if (!$OUTFASTA) {
+        print STDERR "Missing value for -o\n"; exit 0;
+    }
+    if (!$SELECTFILE) {
+        print STDERR "Missing value for -H or -S\n"; exit 0;
+    }
+    if (($SUBSTRINGS & 3) == 3) {
+        print STDERR "Please supply only one of -H or -S, not both.\n"; exit 0;
+    }
+}
+
+################
+# Trap Signals #
+################
+
+sub SigCleanup { # private
+     die "\nExiting: received signal \"" . $_[0] . "\".\n";
+     # Note that some cleanup will be performed in the END block at this point.
+}
+$SIG{'INT'}  = \&SigCleanup;
+$SIG{'TERM'} = \&SigCleanup;
+$SIG{'HUP'}  = \&SigCleanup;
+$SIG{'QUIT'} = \&SigCleanup;
+$SIG{'PIPE'} = \&SigCleanup;
+
+###############################
+#   M A I N   P R O G R A M   #
+###############################
+
+&AskQuestions() if $INTERACTIVE;
+my $SELECT = &ReadSelectStrings($SELECTFILE,$SUBSTRINGS);
+&FilterSeqs($INFASTA,$OUTFASTA,$SELECT,$SUBSTRINGS);
+exit 0;
+
+#############################
+#   S U B R O U T I N E S   #
+#############################
+
+sub AskQuestions {
+
+    print "Welcome to $0.\n",
+          "\n",
+          "This program takes\n",
+          "    (1) a FASTA input file and\n",
+          "    (2) a file with a list of exact FASTA headers\n",
+          "        or a file with a list of exact substrings\n",
+          "and produces\n",
+          "    (3) a new FASTA file, subset of file (1), but\n",
+          "        containing only the sequences that matches the list (2).\n\n";
+
+    print "(1) Enter the name of your input FASTA file: ";
+    $INFASTA = <STDIN>;
+    die "\nNo answer, exiting!\n" if !defined($INFASTA) || $INFASTA =~ m#^\s*$#;
+    chomp $INFASTA;
+    print "\n";
+
+    print "(2a) Choose whether you want to select your sequences\n",
+          "using exact header lines [1] or a set of substrings [2].\n",
+          "Please enter '1' for headers or '2' for substrings: ";
+    $SUBSTRINGS = <STDIN>;
+    die "\nNo answer, exiting!\n" if !defined($SUBSTRINGS) || $SUBSTRINGS !~ m#^\D*([12])\D*$#;
+    $SUBSTRINGS = $1;  # 1 or 2
+    print "\n";
+
+    print "(2b) Enter the name of the file containing",
+          ($SUBSTRINGS == 1 ? " the FASTA headers: " : " the substrings: ");
+    $SELECTFILE = <STDIN>;
+    die "\nNo answer, exiting!\n" if !defined($SELECTFILE) || $SELECTFILE =~ m#^\s*$#;
+    chomp $SELECTFILE;
+    print "\n";
+
+    print "(3) Enter the name of the output FASTA file: ";
+    $OUTFASTA = <STDIN>;
+    die "\nNo answer, exiting!\n" if !defined($OUTFASTA) || $OUTFASTA =~ m#^\s*$#;;
+    chomp $OUTFASTA;
+
+}
+
+sub ReadSelectStrings {
+    my $file = shift;
+    my $mode = shift;  # 1 = headers, 2 = substrings
+
+    my $lfh = new IO::File "<$file"
+        or die "Can't open selection list file '$file': $!\n";
+    my %HEADS = ();
+    while (my $line = <$lfh>) {
+        $line =~ s/^>// if $mode == 1;
+        $line =~ s/^\s*//;
+        $line =~ s/\s*$//;
+        next if $line eq "";
+        warn "Warning: selection line duplicated: '$line'\n"
+           if exists $HEADS{$line};
+        $HEADS{$line}=0;
+    }
+    $lfh->close();
+    \%HEADS;
+}
+
+sub FilterSeqs {
+    my ($infasta,$outfasta,$select,$mode) = @_;
+
+    my $ffh = new IO::File "<$infasta"
+        or die "Can't read from input FASTA file '$infasta': $!\n";
+    my $ofh = new IO::File ">$outfasta"
+        or die "Can't write to output FASTA file '$outfasta': $!\n";
+    my $print = 0;
+    my $seen=0;
+    my $printed=0;
+    while (my $line = <$ffh>) {
+        if ($line =~ m#^>\s*(.*\S)\s*$#) {
+            my $head = $1;
+            $seen++;
+            if ($mode == 1) { # exact FASTA headers
+                $print = exists($select->{$head});
+                $printed += $print;
+                $select->{$head}++ if $print;
+            } else { # mode == 2, substrings search
+                $print = 0;
+                foreach my $substring (keys %$select) {
+                    next unless index($head,$substring) >= 0;
+                    $print = 1;
+                    $printed++;
+                    $select->{$substring}++;
+                    last;
+                }
+            }
+        }
+        next unless $print;
+        print $ofh $line;
+    }
+    $ffh->close();
+    $ofh->close();
+
+    my $listtot = scalar(keys %$select);
+    my $listseen = scalar(grep($_ >= 1, values %$select));
+
+    # Print stats only of output is not STDOUT.
+    if ($outfasta ne "-") {
+        print "\n",
+              "Stats:\n",
+              "\n",
+              "(1) $seen total seqs in FASTA input file\n",
+              ($mode == 1
+                  ? "(2) $listtot distinct headers in FASTA header file\n"
+                  : "(2) $listtot distinct substrings in selection file\n"),
+              "    (with $listseen of them matching at least once)\n",
+              "(3) $printed total seqs in output file\n";
+              "\n",
+              "All Done.";
+    }
+
+}
