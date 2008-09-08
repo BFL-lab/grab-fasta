@@ -19,9 +19,12 @@
 #                                                                            #
 ##############################################################################
 #
-#    $Id: grab-fasta,v 1.1 2008/09/08 21:01:36 riouxp Exp $
+#    $Id: grab-fasta,v 1.2 2008/09/08 21:33:51 riouxp Exp $
 #
 #    $Log: grab-fasta,v $
+#    Revision 1.2  2008/09/08 21:33:51  riouxp
+#    Added support for -X option.
+#
 #    Revision 1.1  2008/09/08 21:01:36  riouxp
 #    Added to CVS.
 #
@@ -43,7 +46,7 @@ use vars qw( $VERSION $RCS_VERSION $DEBUG );
 umask 027;
 
 # Program's name and version number.
-$RCS_VERSION='$Id: grab-fasta,v 1.1 2008/09/08 21:01:36 riouxp Exp $';
+$RCS_VERSION='$Id: grab-fasta,v 1.2 2008/09/08 21:33:51 riouxp Exp $';
 ($VERSION) = ($RCS_VERSION =~ m#,v ([\w\.]+)#);
 my ($BASENAME) = ($0 =~ /([^\/]+)$/);
 
@@ -61,6 +64,32 @@ my $OUTFASTA="";
 my $SELECTFILE="";
 my $SUBSTRINGS=0;
 
+# Definition of special selection routines;
+# The first arg is always the full header line
+# Supplemental args are constants supplied on the command-line
+# with "special,arg1,arg2" 
+
+my %SPECIAL = (
+
+
+    # With "-X lenreads,22,33", we select seqs with length >= 22 and numread >= 33
+    "lenreads" => sub {
+        my $header       = shift;
+        my $minlen       = shift || 0;
+        my $minnumereads = shift || 0;
+        $header =~ m/length=(\d+).*numreads=(\d+)/
+            or die "Error: expected a header with 'length=AAA numreads=BBB, got: $header\n";
+        my ($l,$r) = ($1,$2);
+        return 1 if $l >= $minlen && $r >= $minnumereads;
+        return 0;
+    },
+
+
+
+);
+
+my @SPECIAL_ARGS=(); # global filled with special args
+
 #####################################
 # Command-Line Arguments Processing #
 #####################################
@@ -70,21 +99,26 @@ sub Usage {
                  "\n",
                  "This program extracts a subset of sequences from a FASTA file and\n",
                  "stores this subset in a new file. Sequences are selected by specifying\n",
-                 "a list of exact FASTA header, or a list of specific substrings too look\n",
-                 "for in the headers of the input FASTA file.\n",
+                 "a list of exact FASTA header, a list of specific substrings too look\n",
+                 "for in the headers of the input FASTA file, or the name of a special\n",
+                 "selection subroutine hardcoded in this program.\n",
                  "\n",
                  "Usage: $BASENAME -i       # Interactive session\n",
-                 "   or  $BASENAME -f infasta [-H headerfile|-S stringfile] -o outfasta\n",
+                 "   or  $BASENAME -f infasta [-H headerfile|-S stringfile|-X special] -o outfasta\n",
                  "\n",
                  "where:\n",
                  "\n",
                  "       -f infasta       is an file containing your input FASTA sequences,\n",
                  "       -o outfasta      is the file where your output will be created,\n",
                  "\n",
-                 "and you need to specify ONLY ONE OF -H or -S:\n",
+                 "and you need to specify ONLY ONE OF -H, -S or -X:\n",
                  "\n",
                  "       -H headerfile    is a file containing exact FASTA headers to extract\n",
                  "       -S stringfile    is a file containing the selection substrings.\n",
+                 "       -X special       is the name of an internal selection routine;\n",
+                 "                        recognized routines are: ",join(", ",keys %SPECIAL),"\n",
+                 "                        Constant arguments to the routines can passed by appending\n",
+                 "                        them with command after 'special', e.g. 'lenreads,100,50'\n",
                  "\n",
                  "NOTE: you can use a single dash ('-') for -f and -o, and in that case the\n",
                  "      program will use STDIN and STDOUT respectively.\n";
@@ -92,9 +126,9 @@ sub Usage {
 }
 
 for (;@ARGV;) {
-    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@ifoHS])(.*)$/o);
+    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@ifoHSX])(.*)$/o);
     last if ! defined $opt;
-    if ($opt =~ /[foHS]/ && $arg eq "") {
+    if ($opt =~ /[foHSX]/ && $arg eq "") {
         if (@ARGV < 2) {
             print "Argument required for switch \"-$opt\".\n";
             exit 1;
@@ -109,6 +143,7 @@ for (;@ARGV;) {
     $OUTFASTA=$arg                                   if $opt eq 'o';
     ($SELECTFILE,$SUBSTRINGS)=($arg,($SUBSTRINGS|1)) if $opt eq 'H';
     ($SELECTFILE,$SUBSTRINGS)=($arg,($SUBSTRINGS|2)) if $opt eq 'S';
+    ($SELECTFILE,$SUBSTRINGS)=($arg,($SUBSTRINGS|4)) if $opt eq 'X';
 
     shift @ARGV;
 }
@@ -121,16 +156,16 @@ for (;@ARGV;) {
 if (!$INTERACTIVE) {
     &Usage if !$INFASTA && !$OUTFASTA && !$SELECTFILE; # no arg at all
     if (!$INFASTA) {
-        print STDERR "Missing value for -f\n"; exit 0;
+        print STDERR "Missing value for -f.\n"; exit 0;
     }
     if (!$OUTFASTA) {
-        print STDERR "Missing value for -o\n"; exit 0;
+        print STDERR "Missing value for -o.\n"; exit 0;
     }
     if (!$SELECTFILE) {
-        print STDERR "Missing value for -H or -S\n"; exit 0;
+        print STDERR "Missing value for -H, -S or -X.\n"; exit 0;
     }
-    if (($SUBSTRINGS & 3) == 3) {
-        print STDERR "Please supply only one of -H or -S, not both.\n"; exit 0;
+    if ($SUBSTRINGS != 1 && $SUBSTRINGS != 2 && $SUBSTRINGS != 4) {
+        print STDERR "Please supply only one of -H, -S or -X.\n"; exit 0;
     }
 }
 
@@ -173,6 +208,9 @@ sub AskQuestions {
           "    (3) a new FASTA file, subset of file (1), but\n",
           "        containing only the sequences that matches the list (2).\n\n";
 
+    print "There is also an option -X to select sequences based on special\n",
+          "conditions, but it's not supported interactively.\n\n";
+
     print "(1) Enter the name of your input FASTA file: ";
     $INFASTA = <STDIN>;
     die "\nNo answer, exiting!\n" if !defined($INFASTA) || $INFASTA =~ m#^\s*$#;
@@ -203,7 +241,17 @@ sub AskQuestions {
 
 sub ReadSelectStrings {
     my $file = shift;
-    my $mode = shift;  # 1 = headers, 2 = substrings
+    my $mode = shift;  # 1 = headers, 2 = substrings, 4 = special
+
+    # Select special code and save its optional args
+    if ($mode == 4) {
+        my ($special_name,@args) = split(/,/,$file); # file is not really a filename
+        die "Error: there is no special filtering subroutine called '$special_name' coded in this program.\n"
+             unless exists $SPECIAL{$special_name};
+        my $special_code = $SPECIAL{$special_name};
+        @SPECIAL_ARGS=@args;
+        return $special_code;
+    }
 
     my $lfh = new IO::File "<$file"
         or die "Can't open selection list file '$file': $!\n";
@@ -235,11 +283,12 @@ sub FilterSeqs {
         if ($line =~ m#^>\s*(.*\S)\s*$#) {
             my $head = $1;
             $seen++;
+
             if ($mode == 1) { # exact FASTA headers
                 $print = exists($select->{$head});
                 $printed += $print;
                 $select->{$head}++ if $print;
-            } else { # mode == 2, substrings search
+            } elsif ($mode == 2) { # substrings search
                 $print = 0;
                 foreach my $substring (keys %$select) {
                     next unless index($head,$substring) >= 0;
@@ -248,28 +297,32 @@ sub FilterSeqs {
                     $select->{$substring}++;
                     last;
                 }
+            } elsif ($mode == 4) { # special code selection
+                $print = &$select($line,@SPECIAL_ARGS); # return true/false
+                $printed++ if $print;
             }
         }
+
         next unless $print;
         print $ofh $line;
     }
     $ffh->close();
     $ofh->close();
 
-    my $listtot = scalar(keys %$select);
-    my $listseen = scalar(grep($_ >= 1, values %$select));
+    my $listtot  = $mode < 3 ? scalar(keys %$select) : 0;
+    my $listseen = $mode < 3 ? scalar(grep($_ >= 1, values %$select)) : 0;
 
     # Print stats only of output is not STDOUT.
     if ($outfasta ne "-") {
         print "\n",
               "Stats:\n",
               "\n",
-              "(1) $seen total seqs in FASTA input file\n",
-              ($mode == 1
-                  ? "(2) $listtot distinct headers in FASTA header file\n"
-                  : "(2) $listtot distinct substrings in selection file\n"),
-              "    (with $listseen of them matching at least once)\n",
-              "(3) $printed total seqs in output file\n";
+              "(1) $seen total seqs in FASTA input file\n";
+        print "(2) $listtot distinct headers in FASTA header file\n"  if $mode == 1;
+        print "(2) $listtot distinct substrings in selection file\n"  if $mode == 2;
+        print "    (with $listseen of them matching at least once)\n" if $mode < 3;
+        print "(2) ",($seen-$printed)," rejected seqs in FASTA input file\n" if $mode == 4;
+        print "(3) $printed total seqs in output file\n";
               "\n",
               "All Done.";
     }
