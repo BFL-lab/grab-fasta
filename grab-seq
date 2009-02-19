@@ -21,9 +21,13 @@
 #                                                                            #
 ##############################################################################
 #
-#    $Id: grab-seq,v 1.5 2007/05/08 21:00:58 riouxp Exp $
+#    $Id: grab-seq,v 1.6 2009/02/19 19:36:22 nbeck Exp $
 #
 #    $Log: grab-seq,v $
+#    Revision 1.6  2009/02/19 19:36:22  nbeck
+#    Added option -f used in order to extract all the fasta block in which
+#    the query was found.
+#
 #    Revision 1.5  2007/05/08 21:00:58  riouxp
 #    Now supports supplying the query sequence directly on the
 #    command-line, using -q (it autodetects whether it's a file
@@ -57,7 +61,7 @@ use IO::File;
 umask 027;
 
 # Program's name and version number.
-$RCS_VERSION='$Id: grab-seq,v 1.5 2007/05/08 21:00:58 riouxp Exp $';
+$RCS_VERSION='$Id: grab-seq,v 1.6 2009/02/19 19:36:22 nbeck Exp $';
 ($VERSION) = ($RCS_VERSION =~ m#,v ([\w\.]+)#);
 my ($BASENAME) = ($0 =~ /([^\/]+)$/);
 
@@ -70,7 +74,10 @@ my $USER=getpwuid($<) || getlogin || die "Can't find USER from environment!\n";
 
 $DEBUG=0;
 my $BEFORE=0;
+my $BISDEFBYUSER = undef;
 my $AFTER=0;
+my $AISDEFBYUSER = undef;
+my $ALL=0;
 my $QUERYFILE="";
 my $OUTFILE="-";
 my @SEARCHFILES=();
@@ -87,11 +94,13 @@ sub Usage {
     print STDERR <<MESSAGE;
 $BASENAME $VERSION
 
-Usage: $BASENAME [-b beforelen] [-a afterlen] [-o outfile] -q queryfile file1 file2 file3...
+Usage: $BASENAME [-b beforelen] [-a afterlen] [-f] [-o outfile] -q queryfile file1 file2 file3...
       
 where
        -b len : is the length of the 5' flanking region (mnemo: [B]efore; default: 0)
        -a len : is the length of the 3' flanking region (mnemo: [A]fter; default: 0)
+       -f : used in order to extract all the fasta block in which the query was found
+       (default: 0), if -f the options -b and -a are ignored.
        -o file : is the name of the output file (default: stdout)
        -q queryfile : is a file containing a single FASTA seq to search;
           alternatively, it can be the sequence itself as in "-q AGTAGTAGCT"
@@ -111,7 +120,7 @@ MESSAGE
 }
 
 for (;@ARGV;) {
-    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@baqoXc])(.*)$/o);
+    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@bafqoXc])(.*)$/o);
     last if ! defined $opt;
     if ($opt =~ /[baqoX]/ && $arg eq "") {
         if (@ARGV < 2) {
@@ -124,7 +133,10 @@ for (;@ARGV;) {
 
     $DEBUG=(defined($arg) ? $arg : 1)             if $opt eq '@';
     $BEFORE=$arg                                  if $opt eq 'b';
+    $BISDEFBYUSER=$arg                            if $opt eq 'b';
     $AFTER=$arg                                   if $opt eq 'a';
+    $AISDEFBYUSER=$arg                            if $opt eq 'a';
+    $ALL=1                                        if $opt eq 'f';
     $OUTFILE=$arg                                 if $opt eq 'o';
     $QUERYFILE=$arg                               if $opt eq 'q';
     $BLOCKINGFACTOR=$arg                          if $opt eq 'X';
@@ -168,6 +180,11 @@ my ($query,$revquery) = &ReadQuerySeq($QUERYFILE);
 my $TOTLEN = length($query) + $BEFORE + $AFTER;
 my $OUTFH = new IO::File ">$OUTFILE"
     or die "Cannot write to output file '$OUTFILE': $!\n";
+    
+if (($BISDEFBYUSER || $AISDEFBYUSER) && $ALL == 1) {
+    print STDOUT ";; !!!! -a and -b options are not considered because -f is set !!!!\n";
+    print $OUTFH ";; !!!! -a and -b options are not considered because -f is set !!!!\n" if $OUTFILE ne "-";
+}
 
 foreach my $file (@SEARCHFILES) {
     &StreamSearch($file,$query,$revquery);
@@ -375,7 +392,9 @@ sub ReportMatches {
          }
 
          my $width = 50;
-         print $OUTFH ">$contig|$prettystrand|$mfrom..$mto (extracted: $rfrom..$rto)\n";
+         print $OUTFH ">$contig|$prettystrand|$mfrom..$mto (extracted: $rfrom..$rto)\n" if $ALL == 0;
+         print $OUTFH ">$contig|$prettystrand|$mfrom..$mto \n"                          if $ALL == 1;
+         $totseq = $$seqR                                                               if $ALL == 1;
          for (my $i=0;$i<length($totseq);$i+=$width) {
              my $remain = $i + $width <= length($totseq) ? $width : length($totseq)-$i;
              print $OUTFH substr($totseq,$i,$remain),"\n";
