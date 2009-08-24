@@ -19,9 +19,12 @@
 #                                                                            #
 ##############################################################################
 #
-#    $Id: grab-fasta,v 1.3 2009/08/24 15:18:36 nbeck Exp $
+#    $Id: grab-fasta,v 1.4 2009/08/24 21:12:10 nbeck Exp $
 #
 #    $Log: grab-fasta,v $
+#    Revision 1.4  2009/08/24 21:12:10  nbeck
+#    Added -P option.
+#
 #    Revision 1.3  2009/08/24 15:18:36  nbeck
 #    Added -K Option.
 #
@@ -49,7 +52,7 @@ use vars qw( $VERSION $RCS_VERSION $DEBUG );
 umask 027;
 
 # Program's name and version number.
-$RCS_VERSION='$Id: grab-fasta,v 1.3 2009/08/24 15:18:36 nbeck Exp $';
+$RCS_VERSION='$Id: grab-fasta,v 1.4 2009/08/24 21:12:10 nbeck Exp $';
 ($VERSION) = ($RCS_VERSION =~ m#,v ([\w\.]+)#);
 my ($BASENAME) = ($0 =~ /([^\/]+)$/);
 
@@ -65,6 +68,7 @@ my $INTERACTIVE=0;
 my $INFASTA="";
 my $OUTFASTA="";
 my $SELECTFILE="";
+my $PATTERN=undef;
 my $SUBSTRINGS=0;
 
 # Definition of special selection routines;
@@ -132,9 +136,9 @@ sub Usage {
 }
 
 for (;@ARGV;) {
-    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@ifoHSKX])(.*)$/o);
+    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@ifoPHSKX])(.*)$/o);
     last if ! defined $opt;
-    if ($opt =~ /[foHSKX]/ && $arg eq "") {
+    if ($opt =~ /[foPHSKX]/ && $arg eq "") {
         if (@ARGV < 2) {
             print "Argument required for switch \"-$opt\".\n";
             exit 1;
@@ -151,6 +155,7 @@ for (;@ARGV;) {
     ($SELECTFILE,$SUBSTRINGS)=($arg,($SUBSTRINGS|2)) if $opt eq 'S';
     ($SELECTFILE,$SUBSTRINGS)=($arg,($SUBSTRINGS|3)) if $opt eq 'K';
     ($SELECTFILE,$SUBSTRINGS)=($arg,($SUBSTRINGS|4)) if $opt eq 'X';
+    ($PATTERN,$SUBSTRINGS)    =($arg,($SUBSTRINGS|5)) if $opt eq 'P';
 
     shift @ARGV;
 }
@@ -168,10 +173,10 @@ if (!$INTERACTIVE) {
     if (!$OUTFASTA) {
         print STDERR "Missing value for -o.\n"; exit 0;
     }
-    if (!$SELECTFILE) {
-        print STDERR "Missing value for -H, -S, -K or -X.\n"; exit 0;
+    if (!$SELECTFILE && !$PATTERN) {
+        print STDERR "Missing value for -H, -S, -K, -Por -X.\n"; exit 0;
     }
-    if ($SUBSTRINGS != 1 && $SUBSTRINGS != 2 && $SUBSTRINGS != 3 && $SUBSTRINGS != 4) {
+    if ($SUBSTRINGS != 1 && $SUBSTRINGS != 2 && $SUBSTRINGS != 3 && $SUBSTRINGS != 4 && $SUBSTRINGS != 5) {
         print STDERR "Please supply only one of -H, -S, -K or -X.\n"; exit 0;
     }
 }
@@ -195,7 +200,7 @@ $SIG{'PIPE'} = \&SigCleanup;
 ###############################
 
 &AskQuestions() if $INTERACTIVE;
-my $SELECT = &ReadSelectStrings($SELECTFILE,$SUBSTRINGS);
+my $SELECT = &ReadSelectStrings($SELECTFILE,$SUBSTRINGS,$PATTERN);
 &FilterSeqs($INFASTA,$OUTFASTA,$SELECT,$SUBSTRINGS);
 exit 0;
 
@@ -263,9 +268,17 @@ sub ReadSelectStrings {
         return $special_code;
     }
 
-    my $lfh = new IO::File "<$file"
-        or die "Can't open selection list file '$file': $!\n";
+    my $lfh = "";
     my %HEADS = ();
+    if (defined($PATTERN)) {
+        $HEADS{$PATTERN}=0;
+        return \%HEADS;
+    }
+    else {
+        $lfh = new IO::File "<$file"
+        or die "Can't open selection list file '$file': $!\n";
+    }
+    
     while (my $line = <$lfh>) {
         $line =~ s/^>// if $mode == 1;
         $line =~ s/^\s*//;
@@ -311,7 +324,7 @@ sub FilterSeqs {
                 $print = &$select($line,@SPECIAL_ARGS); # return true/false
                 $printed++ if $print;
             } 
-            elsif ($mode == 3) {
+            elsif ($mode == 3 || $mode == 5) {
                 my @keys = ();
                 $print   = 0;
                 foreach my $substring (keys %$select) {
@@ -352,5 +365,4 @@ sub FilterSeqs {
               "\n",
               "All Done.";
     }
-
 }
