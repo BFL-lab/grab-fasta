@@ -19,9 +19,12 @@
 #                                                                            #
 ##############################################################################
 #
-#    $Id: grab-fasta,v 1.4 2009/08/24 21:12:10 nbeck Exp $
+#    $Id: grab-fasta,v 1.5 2009/10/16 16:42:37 nbeck Exp $
 #
 #    $Log: grab-fasta,v $
+#    Revision 1.5  2009/10/16 16:42:37  nbeck
+#    Added option for annotation or sequence.
+#
 #    Revision 1.4  2009/08/24 21:12:10  nbeck
 #    Added -P option.
 #
@@ -47,12 +50,14 @@ require 5.00;
 use strict;
 use IO::File;
 use vars qw( $VERSION $RCS_VERSION $DEBUG );
+use PirObject;
+PirObject->LoadDataModel("Masterfile");               # Masterfile object
 
 # Default umask
 umask 027;
 
 # Program's name and version number.
-$RCS_VERSION='$Id: grab-fasta,v 1.4 2009/08/24 21:12:10 nbeck Exp $';
+$RCS_VERSION='$Id: grab-fasta,v 1.5 2009/10/16 16:42:37 nbeck Exp $';
 ($VERSION) = ($RCS_VERSION =~ m#,v ([\w\.]+)#);
 my ($BASENAME) = ($0 =~ /([^\/]+)$/);
 
@@ -77,8 +82,6 @@ my $SUBSTRINGS=0;
 # with "special,arg1,arg2" 
 
 my %SPECIAL = (
-
-
     # With "-X lenreads,22,33", we select seqs with length >= 22 and numread >= 33
     "lenreads" => sub {
         my $header       = shift;
@@ -90,9 +93,6 @@ my %SPECIAL = (
         return 1 if $l >= $minlen && $r >= $minnumereads;
         return 0;
     },
-
-
-
 );
 
 my @SPECIAL_ARGS=(); # global filled with special args
@@ -136,9 +136,9 @@ sub Usage {
 }
 
 for (;@ARGV;) {
-    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@ifoPHSKX])(.*)$/o);
+    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@ifoPHSKXA])(.*)$/o);
     last if ! defined $opt;
-    if ($opt =~ /[foPHSKX]/ && $arg eq "") {
+    if ($opt =~ /[foPHSKXA]/ && $arg eq "") {
         if (@ARGV < 2) {
             print "Argument required for switch \"-$opt\".\n";
             exit 1;
@@ -155,7 +155,8 @@ for (;@ARGV;) {
     ($SELECTFILE,$SUBSTRINGS)=($arg,($SUBSTRINGS|2)) if $opt eq 'S';
     ($SELECTFILE,$SUBSTRINGS)=($arg,($SUBSTRINGS|3)) if $opt eq 'K';
     ($SELECTFILE,$SUBSTRINGS)=($arg,($SUBSTRINGS|4)) if $opt eq 'X';
-    ($PATTERN,$SUBSTRINGS)    =($arg,($SUBSTRINGS|5)) if $opt eq 'P';
+    ($PATTERN,$SUBSTRINGS)   =($arg,($SUBSTRINGS|5)) if $opt eq 'P';
+    ($SELECTFILE,$SUBSTRINGS)=($arg,($SUBSTRINGS|6)) if $opt eq 'A';
 
     shift @ARGV;
 }
@@ -174,10 +175,10 @@ if (!$INTERACTIVE) {
         print STDERR "Missing value for -o.\n"; exit 0;
     }
     if (!$SELECTFILE && !$PATTERN) {
-        print STDERR "Missing value for -H, -S, -K, -Por -X.\n"; exit 0;
+        print STDERR "Missing value for -H, -S, -K, -P, -X or -A.\n"; exit 0;
     }
-    if ($SUBSTRINGS != 1 && $SUBSTRINGS != 2 && $SUBSTRINGS != 3 && $SUBSTRINGS != 4 && $SUBSTRINGS != 5) {
-        print STDERR "Please supply only one of -H, -S, -K or -X.\n"; exit 0;
+    if ($SUBSTRINGS != 1 && $SUBSTRINGS != 2 && $SUBSTRINGS != 3 && $SUBSTRINGS != 4 && $SUBSTRINGS != 5 && $SUBSTRINGS != 6) {
+        print STDERR "Please supply only one of -H, -S, -K, -X or -A.\n"; exit 0;
     }
 }
 
@@ -200,8 +201,16 @@ $SIG{'PIPE'} = \&SigCleanup;
 ###############################
 
 &AskQuestions() if $INTERACTIVE;
-my $SELECT = &ReadSelectStrings($SELECTFILE,$SUBSTRINGS,$PATTERN);
+my $SELECT    = &ReadSelectStrings($SELECTFILE,$SUBSTRINGS,$PATTERN);
+
+if ($SUBSTRINGS != 6) {
 &FilterSeqs($INFASTA,$OUTFASTA,$SELECT,$SUBSTRINGS);
+}
+else {
+my $PIRMASTER = PirObject::Masterfile->ObjectFromMasterfile($INFASTA);
+&FilterSeqsWhithAnnot($PIRMASTER,$SELECT,$OUTFASTA);
+}
+
 exit 0;
 
 #############################
@@ -231,16 +240,17 @@ sub AskQuestions {
     print "\n";
 
     print "(2a) Choose whether you want to select your sequences\n",
-          "using exact header lines [1] or a set of substrings [2] or a set of key word [3].\n",
-          "Please enter '1' for headers or '2' for substrings or '3' for key word : ";
+          "using exact header lines [1] or a set of substrings [2] or a set of key word [3] or an annotation or a sequence [6].\n",
+          "Please enter '1' for headers or '2' for substrings or '3' for key word '6' for annotation or sequence: ";
     $SUBSTRINGS = <STDIN>;
-    die "\nNo answer, exiting!\n" if !defined($SUBSTRINGS) || $SUBSTRINGS !~ m#^\D*([123])\D*$#;
-    $SUBSTRINGS = $1;  # 1 or 2 or 3
+    die "\nNo answer, exiting!\n" if !defined($SUBSTRINGS) || $SUBSTRINGS !~ m#^\D*([1236])\D*$#;
+    $SUBSTRINGS = $1;  # 1 or 2 or 3 or 6
     print "\n";
 
-    my $complement = "the FASTA headers: " if $SUBSTRINGS == 1;
-       $complement = "the substrings: "    if $SUBSTRINGS == 2;
-       $complement = "the key word: "      if $SUBSTRINGS == 3;
+    my $complement = "the FASTA headers: "               if $SUBSTRINGS == 1;
+       $complement = "the substrings: "                  if $SUBSTRINGS == 2;
+       $complement = "the key word: "                    if $SUBSTRINGS == 3;
+       $complement = "the annotation or sequence: "      if $SUBSTRINGS == 6;
     print "(2b) Enter the name of the file containing $complement";
     $SELECTFILE = <STDIN>;
     die "\nNo answer, exiting!\n" if !defined($SELECTFILE) || $SELECTFILE =~ m#^\s*$#;
@@ -303,6 +313,7 @@ sub FilterSeqs {
     my $seen=0;
     my $printed=0;
     while (my $line = <$ffh>) {
+        # Traite seulement les headers
         if ($line =~ m#^>\s*(.*\S)\s*$#) {
             my $head = $1;
             $seen++;
@@ -366,3 +377,60 @@ sub FilterSeqs {
               "All Done.";
     }
 }
+
+sub FilterSeqsWhithAnnot {
+    my ($pirmaster,$select,$outfasta) = @_;
+    
+    my $new_pirmaster = new PirObject::Masterfile();
+    my $new_contigs   = ();
+    my $contigs = $pirmaster->get_contigs();
+    my $list_of_added_contig = {};
+    
+    foreach my $substring (keys %$select) {
+        foreach my $contig (@$contigs) {
+            next if $list_of_added_contig->{scalar($contig)}; #contig already added
+            
+            my $annotations = $contig->get_annotations();
+            my $sequence    = $contig->get_sequence();
+            if ($sequence =~ m/$substring/i) {
+                push (@$new_contigs,$contig);
+                $list_of_added_contig->{scalar($contig)}++;
+                next;
+            }
+            
+            foreach my $annot (@$annotations) {
+                next if $list_of_added_contig->{scalar($contig)}; #contig already added
+                
+                my $startline = $annot->get_startline();
+                if ($startline && $startline =~ m/$substring/i) {
+                    push (@$new_contigs,$contig);
+                    $list_of_added_contig->{scalar($contig)}++;
+                    next;
+                }
+                my $endline   = $annot->get_endline();
+                if ($endline && $endline =~ m/$substring/i) {
+                    push (@$new_contigs,$contig);
+                    $list_of_added_contig->{scalar($contig)}++;
+                    next;
+                }
+            }
+        }
+    }
+    
+    $new_pirmaster->set_contigs($new_contigs);
+    $new_pirmaster->ObjectToMasterfile("$outfasta");
+    
+    # Print stats only of output is not STDOUT.
+    my $seen    = scalar(@$contigs);
+    my $printed = !$new_contigs ? 0 : scalar(@$new_contigs);
+    if ($outfasta ne "-") {
+        print "\n",
+              "Stats:\n",
+              "\n",
+              "(1) $seen total seqs in FASTA input file\n";
+        print "(3) $printed total seqs in output file\n";
+              "\n",
+              "All Done.";
+    }
+}
+
