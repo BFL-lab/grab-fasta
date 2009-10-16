@@ -19,9 +19,12 @@
 #                                                                            #
 ##############################################################################
 #
-#    $Id: grab-fasta,v 1.5 2009/10/16 16:42:37 nbeck Exp $
+#    $Id: grab-fasta,v 1.6 2009/10/16 16:46:54 nbeck Exp $
 #
 #    $Log: grab-fasta,v $
+#    Revision 1.6  2009/10/16 16:46:54  nbeck
+#    Added usage for -A.
+#
 #    Revision 1.5  2009/10/16 16:42:37  nbeck
 #    Added option for annotation or sequence.
 #
@@ -57,7 +60,7 @@ PirObject->LoadDataModel("Masterfile");               # Masterfile object
 umask 027;
 
 # Program's name and version number.
-$RCS_VERSION='$Id: grab-fasta,v 1.5 2009/10/16 16:42:37 nbeck Exp $';
+$RCS_VERSION='$Id: grab-fasta,v 1.6 2009/10/16 16:46:54 nbeck Exp $';
 ($VERSION) = ($RCS_VERSION =~ m#,v ([\w\.]+)#);
 my ($BASENAME) = ($0 =~ /([^\/]+)$/);
 
@@ -129,6 +132,8 @@ sub Usage {
                  "                        recognized routines are: ",join(", ",keys %SPECIAL),"\n",
                  "                        Constant arguments to the routines can passed by appending\n",
                  "                        them with command after 'special', e.g. 'lenreads,100,50'\n",
+                 "       -A annotation    is a file containing part of an annotation\n",
+                 "          or sequence   or part of a sequence.\n",
                  "\n",
                  "NOTE: you can use a single dash ('-') for -f and -o, and in that case the\n",
                  "      program will use STDIN and STDOUT respectively.\n";
