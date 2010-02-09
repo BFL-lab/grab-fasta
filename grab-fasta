@@ -19,9 +19,12 @@
 #                                                                            #
 ##############################################################################
 #
-#    $Id: grab-fasta,v 1.6 2009/10/16 16:46:54 nbeck Exp $
+#    $Id: grab-fasta,v 1.7 2010/02/09 21:10:37 sprigent Exp $
 #
 #    $Log: grab-fasta,v $
+#    Revision 1.7  2010/02/09 21:10:37  sprigent
+#    Add support for quality files.
+#
 #    Revision 1.6  2009/10/16 16:46:54  nbeck
 #    Added usage for -A.
 #
@@ -60,7 +63,7 @@ PirObject->LoadDataModel("Masterfile");               # Masterfile object
 umask 027;
 
 # Program's name and version number.
-$RCS_VERSION='$Id: grab-fasta,v 1.6 2009/10/16 16:46:54 nbeck Exp $';
+$RCS_VERSION='$Id: grab-fasta,v 1.7 2010/02/09 21:10:37 sprigent Exp $';
 ($VERSION) = ($RCS_VERSION =~ m#,v ([\w\.]+)#);
 my ($BASENAME) = ($0 =~ /([^\/]+)$/);
 
@@ -78,6 +81,9 @@ my $OUTFASTA="";
 my $SELECTFILE="";
 my $PATTERN=undef;
 my $SUBSTRINGS=0;
+my $INQUAL="";
+my $OUTQUAL="";
+my $OUTPUTFIXDATA="";
 
 # Definition of special selection routines;
 # The first arg is always the full header line
@@ -114,12 +120,20 @@ sub Usage {
                  "selection subroutine hardcoded in this program.\n",
                  "\n",
                  "Usage: $BASENAME -i       # Interactive session\n",
-                 "   or  $BASENAME -f infasta [-H headerfile|-S stringfile|-K keyfile|-X special] -o outfasta\n",
+                 "   or  $BASENAME -f infasta [-H headerfile|-S stringfile|-K keyfile|-X special|-q inquality|-F FixDatafile] -o outfasta\n",
                  "\n",
                  "where:\n",
                  "\n",
                  "       -f infasta       is an file containing your input FASTA sequences,\n",
                  "       -o outfasta      is the file where your output will be created,\n",
+                 "                        A quality file based on outfasta name will be created if -q is used\n",
+                 "\n", 
+                 "you can specify -q and -F\n",
+                 "\n",
+                 "       -q inquality     is a quality file in the same with headers corresponding\n",
+                 "                        to the FASTA input file\n",
+                 "       -F fixdata       is an output file containing headers of sequences that are\n",
+                 "                        not found in both FASTA and quality file\n",
                  "\n",
                  "and you need to specify ONLY ONE OF -H, -S -K or -X:\n",
                  "\n",
@@ -141,9 +155,9 @@ sub Usage {
 }
 
 for (;@ARGV;) {
-    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@ifoPHSKXA])(.*)$/o);
+    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@ifoPHSKXAqF])(.*)$/o);
     last if ! defined $opt;
-    if ($opt =~ /[foPHSKXA]/ && $arg eq "") {
+    if ($opt =~ /[foPHSKXAqF]/ && $arg eq "") {
         if (@ARGV < 2) {
             print "Argument required for switch \"-$opt\".\n";
             exit 1;
@@ -156,13 +170,15 @@ for (;@ARGV;) {
     $INTERACTIVE=1                                   if $opt eq 'i';
     $INFASTA=$arg                                    if $opt eq 'f';
     $OUTFASTA=$arg                                   if $opt eq 'o';
+    $INQUAL=$arg                                     if $opt eq 'q';
     ($SELECTFILE,$SUBSTRINGS)=($arg,($SUBSTRINGS|1)) if $opt eq 'H';
     ($SELECTFILE,$SUBSTRINGS)=($arg,($SUBSTRINGS|2)) if $opt eq 'S';
     ($SELECTFILE,$SUBSTRINGS)=($arg,($SUBSTRINGS|3)) if $opt eq 'K';
     ($SELECTFILE,$SUBSTRINGS)=($arg,($SUBSTRINGS|4)) if $opt eq 'X';
     ($PATTERN,$SUBSTRINGS)   =($arg,($SUBSTRINGS|5)) if $opt eq 'P';
     ($SELECTFILE,$SUBSTRINGS)=($arg,($SUBSTRINGS|6)) if $opt eq 'A';
-
+    $OUTPUTFIXDATA=$arg                              if $opt eq 'F';
+    
     shift @ARGV;
 }
 
@@ -184,6 +200,9 @@ if (!$INTERACTIVE) {
     }
     if ($SUBSTRINGS != 1 && $SUBSTRINGS != 2 && $SUBSTRINGS != 3 && $SUBSTRINGS != 4 && $SUBSTRINGS != 5 && $SUBSTRINGS != 6) {
         print STDERR "Please supply only one of -H, -S, -K, -X or -A.\n"; exit 0;
+    }
+    if ($OUTPUTFIXDATA && !$INQUAL) {
+        print STDERR "Quality file needed to use -F option.\n"; exit 0;
     }
 }
 
@@ -209,7 +228,13 @@ $SIG{'PIPE'} = \&SigCleanup;
 my $SELECT    = &ReadSelectStrings($SELECTFILE,$SUBSTRINGS,$PATTERN);
 
 if ($SUBSTRINGS != 6) {
-&FilterSeqs($INFASTA,$OUTFASTA,$SELECT,$SUBSTRINGS);
+    if ($INQUAL) {
+        $OUTQUAL="$OUTFASTA.qual";
+        &FilterSeqs($INFASTA,$OUTFASTA,$SELECT,$SUBSTRINGS,$INQUAL,$OUTQUAL);
+    }
+    else {
+        &FilterSeqs($INFASTA,$OUTFASTA,$SELECT,$SUBSTRINGS);
+    }
 }
 else {
 my $PIRMASTER = PirObject::Masterfile->ObjectFromMasterfile($INFASTA);
@@ -228,13 +253,17 @@ sub AskQuestions {
           "\n",
           "This program takes\n",
           "    (1) a FASTA input file and\n",
-          "    (2) a file with a list of exact FASTA headers\n",
+          "    (2) eventually a quality input file corresponding\n",
+          "        to the FASTA input file\n",
+          "    (3) a file with a list of exact FASTA headers\n",
           "        or a file with a list of exact substrings\n",
           "        or a file with a list of key word separated by '|'\n",
           "and produces\n",
-          "    (3) a new FASTA file, subset of file (1), but\n",
-          "        containing only the sequences that matches the list (2).\n\n";
-
+          "    (4) a new FASTA file, subset of file (1), but\n",
+          "        containing only the sequences that matches the list (2)\n",
+          "        eventually the corresponding quality file, if an input\n",
+          "        quality file is given.\n\n";
+          
     print "There is also an option -X to select sequences based on special\n",
           "conditions, but it's not supported interactively.\n\n";
 
@@ -243,8 +272,21 @@ sub AskQuestions {
     die "\nNo answer, exiting!\n" if !defined($INFASTA) || $INFASTA =~ m#^\s*$#;
     chomp $INFASTA;
     print "\n";
+    
+    print "(2) Enter the name of your input quality file if you want to use one: ";
+    $INQUAL = <STDIN>;
+    print "\nNo quality file input, continue" if !defined($INQUAL) || $INQUAL =~ m#^\s*$#;
+    chomp $INQUAL;
+    print "\n";
+    if ($INQUAL){
+        print "    Enter the name of an output file comparing FASTA and quality headers if you want to use one: ";
+        $OUTPUTFIXDATA = <STDIN>;
+        print "\nNo Fixdata file output, continue\n" if !defined($OUTPUTFIXDATA) || $OUTPUTFIXDATA =~ m#^\s*$#;
+        chomp $OUTPUTFIXDATA;
+    }
 
-    print "(2a) Choose whether you want to select your sequences\n",
+    print "\n";
+    print "(3a) Choose whether you want to select your sequences\n",
           "using exact header lines [1] or a set of substrings [2] or a set of key word [3] or an annotation or a sequence [6].\n",
           "Please enter '1' for headers or '2' for substrings or '3' for key word '6' for annotation or sequence: ";
     $SUBSTRINGS = <STDIN>;
@@ -256,17 +298,20 @@ sub AskQuestions {
        $complement = "the substrings: "                  if $SUBSTRINGS == 2;
        $complement = "the key word: "                    if $SUBSTRINGS == 3;
        $complement = "the annotation or sequence: "      if $SUBSTRINGS == 6;
-    print "(2b) Enter the name of the file containing $complement";
+    print "(3b) Enter the name of the file containing $complement";
     $SELECTFILE = <STDIN>;
     die "\nNo answer, exiting!\n" if !defined($SELECTFILE) || $SELECTFILE =~ m#^\s*$#;
     chomp $SELECTFILE;
     print "\n";
 
-    print "(3) Enter the name of the output FASTA file: ";
+    print "(4) Enter the name of the output FASTA file";
+    print " (The corresponding quality file will be created)" if $INQUAL;
+    print ": ";
     $OUTFASTA = <STDIN>;
+    $OUTQUAL = "$OUTFASTA.qual" if defined($INQUAL);
     die "\nNo answer, exiting!\n" if !defined($OUTFASTA) || $OUTFASTA =~ m#^\s*$#;;
     chomp $OUTFASTA;
-
+    print "\n";
 }
 
 sub ReadSelectStrings {
@@ -308,62 +353,60 @@ sub ReadSelectStrings {
 }
 
 sub FilterSeqs {
-    my ($infasta,$outfasta,$select,$mode) = @_;
+    my ($infasta,$outfasta,$select,$mode,$inqual,$outqual) = @_;
 
     my $ffh = new IO::File "<$infasta"
         or die "Can't read from input FASTA file '$infasta': $!\n";
     my $ofh = new IO::File ">$outfasta"
         or die "Can't write to output FASTA file '$outfasta': $!\n";
-    my $print=0;
-    my $seen=0;
-    my $printed=0;
-    while (my $line = <$ffh>) {
-        # Traite seulement les headers
-        if ($line =~ m#^>\s*(.*\S)\s*$#) {
-            my $head = $1;
-            $seen++;
-
-            if ($mode == 1) { # exact FASTA headers
-                $print = exists($select->{$head});
-                $printed += $print;
-                $select->{$head}++ if $print;
-            } elsif ($mode == 2) { # substrings search
-                $print = 0;
-                foreach my $substring (keys %$select) {
-                    next unless index($head,$substring) >= 0;
-                    $print = 1;
-                    $printed++;
-                    $select->{$substring}++;
-                    last;
-                }
-            } elsif ($mode == 4) { # special code selection
-                $print = &$select($line,@SPECIAL_ARGS); # return true/false
-                $printed++ if $print;
-            } 
-            elsif ($mode == 3 || $mode == 5) {
-                my @keys = ();
-                $print   = 0;
-                foreach my $substring (keys %$select) {
-                    @keys = split(/\|/,$substring);
-                    my $count = 0;
-                    foreach my $key (@keys) {
-                        $key =~ s/^\s+//;
-                        $key =~ s/\s+$//;
-                        next unless $line =~ m/$key/i;
-                        $count++;
-                    }
-                    $print = 1 if scalar(@keys) == $count;
-                }
-                $printed++ if $print;
+    
+    my ($printQual,$seenQual,$printedQual,$printFasta,$seenFasta,$printedFasta,$numberOfDifference,$numberOfCorrespondance,$totalFasta,$totalQuali) = 
+        (0,0,0,0,0,0,0,0,0,0);
+    
+    if (!$inqual)
+    {
+        while (my $line = <$ffh>) 
+        {
+            ($printFasta,$seenFasta,$printedFasta) = &FilterFile($line,$ofh,$select,$mode,$printFasta,$seenFasta,$printedFasta);
+        }
+    }
+    
+    my ($finalFasta,$finalQuali);
+    if ($inqual) {
+        ($finalFasta,$finalQuali,$numberOfCorrespondance,$numberOfDifference,$totalFasta,$totalQuali)= &CheckFastaQualCorrespondance($infasta,$inqual);
+        #we now have 2 Hashes : $finalFasta->{header}->{sequence} and $finalQuali->{header}->{sequence}
+        #The subroutine &FilterFile is going to look for the research criterion
+        my ($lineFastaHead, $lineFasta, $lineQualHead, $lineQual);
+        foreach (keys %{$finalFasta})
+        {
+            $lineFastaHead = $_;
+            ($printFasta,$seenFasta,$printedFasta) = &FilterFile($lineFastaHead,$ofh,$select,$mode,$printFasta,$seenFasta,$printedFasta); 
+            foreach ($finalFasta->{$lineFastaHead}) 
+            {
+                $lineFasta = $_;
+                ($printFasta,$seenFasta,$printedFasta) = &FilterFile($lineFasta,$ofh,$select,$mode,$printFasta,$seenFasta,$printedFasta);
             }
         }
 
-        next unless $print;
-        print $ofh $line;
+        my $ofhq = new IO::File ">$outqual"
+            or die "Can't write to output QUALITY file '$outqual': $!\n";
+        foreach (keys %{$finalQuali})
+        {
+            $lineQualHead = $_;
+            ($printQual,$seenQual,$printedQual) = &FilterFile($lineQualHead,$ofhq,$select,$mode,$printQual,$seenQual,$printedQual); 
+            foreach ($finalQuali->{$lineQualHead}) 
+            {
+                $lineQual = $_;
+                ($printQual,$seenQual,$printedQual) = &FilterFile($lineQual,$ofhq,$select,$mode,$printQual,$seenQual,$printedQual);
+            }
+        }
+        $ofhq->close();
+        print "\nAn output quality file has been created : $outqual \n" if $printedQual > 0;
+  
     }
     $ffh->close();
     $ofh->close();
-
+    
     my $listtot  = $mode < 3 ? scalar(keys %$select) : 0;
     my $listseen = $mode < 3 ? scalar(grep($_ >= 1, values %$select)) : 0;
 
@@ -371,17 +414,184 @@ sub FilterSeqs {
     if ($outfasta ne "-") {
         print "\n",
               "Stats:\n",
-              "\n",
-              "(1) $seen total seqs in FASTA input file\n";
-        print "(2) $listtot distinct headers in FASTA header file\n"  if $mode == 1;
-        print "(2) $listtot distinct substrings in selection file\n"  if $mode == 2;
-        print "    (with $listseen of them matching at least once)\n" if $mode < 3;
-        print "(2) ",($seen-$printed)," rejected seqs in FASTA input file\n" if $mode == 4;
-        print "(3) $printed total seqs in output file\n";
-              "\n",
-              "All Done.";
+              "\n";
+        print "(1) $seenFasta total seqs in FASTA input file\n" if !$inqual;
+        print "(1) $totalFasta total seqs in FASTA input file\n",
+              "    $totalQuali total seqs in Quality input file\n",
+              "(2) $seenFasta total identical seqs in FASTA and quality input files\n" if $inqual;
+        print "    You can retrieve non identical sequences by using -F option\n" if !$OUTPUTFIXDATA && ($numberOfDifference != 0);
+        print "    A file containing headers of sequences that differ has been created: $OUTPUTFIXDATA\n" if $OUTPUTFIXDATA && ($numberOfDifference != 0);
+        print "(3) $listtot distinct headers in FASTA header file\n"  if $mode == 1;
+        print "(3) $listtot distinct substrings in selection file\n"  if $mode == 2;
+        print "    (with $listseen of them matching at least once in FASTA file)\n" if $mode < 3;
+        print "(3) ",($seenFasta-$printedFasta)," rejected seqs in FASTA input file\n" if $mode == 4;
+        print "(4) $printedFasta total seqs in output FASTA file\n" if !$inqual;
+        print "(4) $printedQual total seqs in output FASTA and quality files\n" if $inqual;
+        print "\n",
+              "All Done.\n";
     }
 }
+
+sub FilterFile {
+    ######################################################################################
+    #this subroutine take in entry a line of a fasta/quality file, an output file,
+    #the list of the "word" we are looking for, the mode of research and some arguments
+    #for statistic
+    #It will write in the output file the header and the sequence of the fasta or quality
+    #ssequence if it correspond to the criterion of research
+    #
+    #It output argument for statistics
+    ######################################################################################
+
+    my ($line,$ofh,$select,$mode,$print,$seen,$printed) = @_;
+    if ($line =~ m#^>\s*(.*\S)\s*$#) {
+        my $head = $1;
+        $seen++;
+
+        if ($mode == 1) { # exact FASTA headers
+            $print = exists($select->{$head});
+            $printed += $print;
+            $select->{$head}++ if $print;
+        } elsif ($mode == 2) { # substrings search
+            $print = 0;
+            foreach my $substring (keys %$select) {
+                next unless index($head,$substring) >= 0;
+                $print = 1;
+                $printed++;
+                $select->{$substring}++;
+                last;
+            }
+        } elsif ($mode == 4) { # special code selection
+            $print = &$select($line,@SPECIAL_ARGS); # return true/false
+            $printed++ if $print;
+        } 
+        elsif ($mode == 3 || $mode == 5) {
+            my @keys = ();
+            $print   = 0;
+            foreach my $substring (keys %$select) {
+                @keys = split(/\|/,$substring);
+                my $count = 0;
+                foreach my $key (@keys) {
+                    $key =~ s/^\s+//;
+                    $key =~ s/\s+$//;
+                    next unless $line =~ m/$key/i;
+                    $count++;
+                }
+                $print = 1 if scalar(@keys) == $count;
+            }
+            $printed++ if $print;
+        }
+    }
+    return ($print,$seen,$printed) unless $print;
+    print $ofh $line;
+    
+    return ($print,$seen,$printed);
+}
+
+
+sub CheckFastaQualCorrespondance
+{
+    ############################################################################################
+    #This subroutine will check if fasta file and quality file have the same
+    #headers 
+    #Take in argument a fasta file and a quality file (same structure as fasta files)
+    #and return, in this order : return ($finalFasta, $finalQuali, $numberOfCorrespondance, $numberOfDifference,$numberOfFastaSeq,$numberOfQualSeq);
+    #  - a Hash containing all fasta sequences which have headers also presents in the quality file
+    #      structure : $finalFasta->{header}->{Sequence(possibly more than one lign)}
+    #  - a Hash containing all quality sequences which have headers also presents in the fasta file
+    #      structure : $FinalQuali->{header}->{Sequence(possibly more than one lign)}
+    #  - the number of sequence find in both files
+    #  - the number of sequences find in only one of the file
+    #  - the total number of Fasta sequences in the fasta file
+    #  - the total number of Quality sequences in the quality file
+    #
+    #If the -F option is given to the software, it will create a file and put in it all headers
+    #not find in both sequences
+    ############################################################################################
+    my ($infasta,$inqual) = @_;
+    my $ffh = new IO::File "<$infasta"
+            or die "Can't read from input FASTA file '$infasta': $!\n";
+    my $qfh = new IO::File "<$inqual"
+            or die "Can't read from input Quality file '$inqual': $!\n";
+    my ($numberOfFastaSeq,$numberOfQualSeq) = 0;
+    my ($test,$header,@headerDifferent);
+    my ($Quali,$Fasta,$finalFasta,$finalQuali) = ();
+    while (my $lineFasta = <$ffh>) #For each line, if we have a ">......" we create a $Fasta->{header}, 
+                                   #else we populate the last Fasta->{header} with the sequence
+    {
+        if ($lineFasta =~ m#^>\s*(.*\S)\s*$#)
+        {
+            $header = ">$1";
+            $numberOfFastaSeq++;
+        }
+        else
+        {
+            $Fasta->{$header} = $Fasta->{$header}.$lineFasta if exists($Fasta->{$header});
+            $Fasta->{$header} = $lineFasta if !exists($Fasta->{$header});
+        }
+        
+    }
+    while (my $lineQuali = <$qfh>) #same as precedent while but with quality file
+    {
+        if ($lineQuali =~ m#^>\s*(.*\S)\s*$#)
+        {
+            $header = ">$1";
+            $numberOfQualSeq++;
+        }
+        else
+        {
+            $Quali->{$header} = $Quali->{$header}.$lineQuali if exists($Quali->{$header});
+            $Quali->{$header} = $lineQuali if !exists($Quali->{$header});
+        }
+    }
+      
+    #now take all sequences from FASTA file and we check if they are present in the $Quali
+    #If they are present in both files, we put them in a $finalFasta and $finalQuali hashes
+    #            $finalFasta->{header}->{sequence}
+    #If they are not present in the quali file, we put the header in an array to create the output fixdata file
+    my $ffh2 = new IO::File "<$infasta"
+        or die "Can't read from input FASTA file '$infasta': $!\n";
+    while (my $lineFasta2 = <$ffh2>)
+    {
+        if ($lineFasta2 =~ m#^>\s*(.*\S)\s*$#)
+        {
+            my $headFas = ">$1";
+            $test = exists($Quali->{$headFas});
+            $finalFasta->{$headFas} = "\n".$Fasta->{$headFas} if $test;
+            $finalQuali->{$headFas} = "\n".$Quali->{$headFas} if $test;
+            push (@headerDifferent, $headFas) if !$test &&  $OUTPUTFIXDATA;
+        }
+    }
+    
+    my $numberOfCorrespondance = scalar keys %{$finalQuali};
+    my $numberOfDifference = ($numberOfFastaSeq - $numberOfCorrespondance) + ($numberOfQualSeq - $numberOfCorrespondance);
+    
+    if($numberOfDifference != 0 && $OUTPUTFIXDATA) #if the -F option is used, we also check in the quality file if there is some
+                                                   #sequences not present in the fasta file and we put them in the array
+    {
+        my $qfh2 = new IO::File "<$inqual"
+            or die "Can't read from input FASTA file '$infasta': $!\n";
+        while (my $lineQuali2 = <$qfh2>)
+        {
+            if ($lineQuali2 =~ m#^>\s*(.*\S)\s*$#)
+            {
+                my $headQual = ">$1";
+                push (@headerDifferent, $headQual) if !(exists($Fasta->{$headQual}));
+            }
+        }
+        my $fixData = new IO::File ">$OUTPUTFIXDATA" 
+            or die "Can't in the fixdata file '$OUTPUTFIXDATA': $!\n";
+        foreach(@headerDifferent) {print $fixData "$_ \n";}
+        $fixData->close();
+        $qfh2->close();
+    } 
+    die "\nFasta and Quality files are totally different, any headers are the sames\n\n" if $numberOfCorrespondance == 0;
+    $qfh->close();
+    $ffh->close();
+    $ffh2->close();
+    return ($finalFasta, $finalQuali, $numberOfCorrespondance, $numberOfDifference,$numberOfFastaSeq,$numberOfQualSeq);
+}
+
 
 sub FilterSeqsWhithAnnot {
     my ($pirmaster,$select,$outfasta) = @_;
