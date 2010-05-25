@@ -19,9 +19,12 @@
 #                                                                            #
 ##############################################################################
 #
-#    $Id: grab-fasta,v 1.7 2010/02/09 21:10:37 sprigent Exp $
+#    $Id: grab-fasta,v 1.8 2010/05/25 20:41:03 nbeck Exp $
 #
 #    $Log: grab-fasta,v $
+#    Revision 1.8  2010/05/25 20:41:03  nbeck
+#    Added info in Usage.
+#
 #    Revision 1.7  2010/02/09 21:10:37  sprigent
 #    Add support for quality files.
 #
@@ -63,7 +66,7 @@ PirObject->LoadDataModel("Masterfile");               # Masterfile object
 umask 027;
 
 # Program's name and version number.
-$RCS_VERSION='$Id: grab-fasta,v 1.7 2010/02/09 21:10:37 sprigent Exp $';
+$RCS_VERSION='$Id: grab-fasta,v 1.8 2010/05/25 20:41:03 nbeck Exp $';
 ($VERSION) = ($RCS_VERSION =~ m#,v ([\w\.]+)#);
 my ($BASENAME) = ($0 =~ /([^\/]+)$/);
 
@@ -115,7 +118,7 @@ sub Usage {
                  "\n",
                  "This program extracts a subset of sequences from a FASTA file and\n",
                  "stores this subset in a new file. Sequences are selected by specifying\n",
-                 "a list of exact FASTA header, a list of specific substrings too look\n",
+                 "a list of exact FASTA header, a list of specific substrings to look\n",
                  "for in the headers of the input FASTA file, or the name of a special\n",
                  "selection subroutine hardcoded in this program.\n",
                  "\n",
@@ -126,22 +129,24 @@ sub Usage {
                  "\n",
                  "       -f infasta       is an file containing your input FASTA sequences,\n",
                  "       -o outfasta      is the file where your output will be created,\n",
-                 "                        A quality file based on outfasta name will be created if -q is used\n",
+                 "                        A quality file based on the outfasta name will be created if -q is used\n",
                  "\n", 
-                 "you can specify -q and -F\n",
+                 "you may specify -q and -F\n",
                  "\n",
-                 "       -q inquality     is a quality file in the same with headers corresponding\n",
-                 "                        to the FASTA input file\n",
-                 "       -F fixdata       is an output file containing headers of sequences that are\n",
+                 "       -q inquality     is a quality file with headers corresponding\n",
+                 "                        to those of the FASTA input file\n",
+                 "       -F missingdata   is an output file containing headers of sequences that are\n",
                  "                        not found in both FASTA and quality file\n",
                  "\n",
                  "and you need to specify ONLY ONE OF -H, -S -K or -X:\n",
                  "\n",
-                 "       -H headerfile    is a file containing exact FASTA headers to extract\n",
+                 "       -H headerfile    is a file containing exact FASTA headers of sequences to extract\n",
                  "       -S stringfile    is a file containing the selection substrings.\n",
-                 "       -K keyfile       is a file containing key word, each key must be separated by '|'.\n",
-                 "                        Example : 'mouse|mitochondria' used to extract sequence with\n",
-                 "                        FASTA header containing mouse and mitochondria\n",
+                 "       -K keyfile       is a file containing key words, each key must be separated by '|'.\n",
+                 "                        Example : 'mouse|mitochondria' is used to extract sequences with\n",
+                 "                        FASTA headers containing mouse and mitochondria\n",
+                 "       -P pattern       is a string containing key word.\n",
+                 "                        Same usage as -K but don't need file.\n",
                  "       -X special       is the name of an internal selection routine;\n",
                  "                        recognized routines are: ",join(", ",keys %SPECIAL),"\n",
                  "                        Constant arguments to the routines can passed by appending\n",
@@ -151,6 +156,7 @@ sub Usage {
                  "\n",
                  "NOTE: you can use a single dash ('-') for -f and -o, and in that case the\n",
                  "      program will use STDIN and STDOUT respectively.\n";
+
     exit 20;
 }
 
