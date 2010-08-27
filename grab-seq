@@ -21,9 +21,12 @@
 #                                                                            #
 ##############################################################################
 #
-#    $Id: grab-seq,v 1.6 2009/02/19 19:36:22 nbeck Exp $
+#    $Id: grab-seq,v 1.7 2010/08/27 18:35:21 nbeck Exp $
 #
 #    $Log: grab-seq,v $
+#    Revision 1.7  2010/08/27 18:35:21  nbeck
+#    Added support for MF, removed line with ";".
+#
 #    Revision 1.6  2009/02/19 19:36:22  nbeck
 #    Added option -f used in order to extract all the fasta block in which
 #    the query was found.
@@ -61,7 +64,7 @@ use IO::File;
 umask 027;
 
 # Program's name and version number.
-$RCS_VERSION='$Id: grab-seq,v 1.6 2009/02/19 19:36:22 nbeck Exp $';
+$RCS_VERSION='$Id: grab-seq,v 1.7 2010/08/27 18:35:21 nbeck Exp $';
 ($VERSION) = ($RCS_VERSION =~ m#,v ([\w\.]+)#);
 my ($BASENAME) = ($0 =~ /([^\/]+)$/);
 
@@ -221,7 +224,6 @@ sub ReadQuerySeq {
     my $revseq = reverse($seq);
     $revseq =~ tr/ACGT/TGCA/;
     ($seq,$revseq);
-
 }
 
 sub StreamSearch {
@@ -281,6 +283,7 @@ sub ReadBlock {
             last;
         }
         next if $line =~ m#^\s*$#;
+        next if $line =~ m/^;/;
         if ($line =~ m#^>\s*(\S*.*\S)#) {
             if (!@seq) {
                 $contig = $1;
