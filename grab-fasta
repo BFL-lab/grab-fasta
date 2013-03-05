@@ -19,9 +19,12 @@
 #                                                                            #
 ##############################################################################
 #
-#    $Id: grab-fasta,v 1.8 2010/05/25 20:41:03 nbeck Exp $
+#    $Id: grab-fasta,v 1.9 2013/03/05 09:20:30 nbeck Exp $
 #
 #    $Log: grab-fasta,v $
+#    Revision 1.9  2013/03/05 09:20:30  nbeck
+#    Added split option.
+#
 #    Revision 1.8  2010/05/25 20:41:03  nbeck
 #    Added info in Usage.
 #
@@ -60,13 +63,14 @@ use strict;
 use IO::File;
 use vars qw( $VERSION $RCS_VERSION $DEBUG );
 use PirObject;
+use File::Basename;
 PirObject->LoadDataModel("Masterfile");               # Masterfile object
 
 # Default umask
 umask 027;
 
 # Program's name and version number.
-$RCS_VERSION='$Id: grab-fasta,v 1.8 2010/05/25 20:41:03 nbeck Exp $';
+$RCS_VERSION='$Id: grab-fasta,v 1.9 2013/03/05 09:20:30 nbeck Exp $';
 ($VERSION) = ($RCS_VERSION =~ m#,v ([\w\.]+)#);
 my ($BASENAME) = ($0 =~ /([^\/]+)$/);
 
@@ -81,6 +85,7 @@ $DEBUG=0;
 my $INTERACTIVE=0;
 my $INFASTA="";
 my $OUTFASTA="";
+my $OUTDIR="";
 my $SELECTFILE="";
 my $PATTERN=undef;
 my $SUBSTRINGS=0;
@@ -130,6 +135,8 @@ sub Usage {
                  "       -f infasta       is an file containing your input FASTA sequences,\n",
                  "       -o outfasta      is the file where your output will be created,\n",
                  "                        A quality file based on the outfasta name will be created if -q is used\n",
+                 "       -s directory     Each result is stored in an output file inside a directory,\n",
+                 "                        this option is only available if -o is not '-'\n",
                  "\n", 
                  "you may specify -q and -F\n",
                  "\n",
@@ -161,9 +168,9 @@ sub Usage {
 }
 
 for (;@ARGV;) {
-    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@ifoPHSKXAqF])(.*)$/o);
+    my ($opt,$arg) = ($ARGV[0] =~ /^-([\@ifosPHSKXAqF])(.*)$/o);
     last if ! defined $opt;
-    if ($opt =~ /[foPHSKXAqF]/ && $arg eq "") {
+    if ($opt =~ /[fosPHSKXAqF]/ && $arg eq "") {
         if (@ARGV < 2) {
             print "Argument required for switch \"-$opt\".\n";
             exit 1;
@@ -176,6 +183,7 @@ for (;@ARGV;) {
     $INTERACTIVE=1                                   if $opt eq 'i';
     $INFASTA=$arg                                    if $opt eq 'f';
     $OUTFASTA=$arg                                   if $opt eq 'o';
+    $OUTDIR=$arg                                     if $opt eq 's';
     $INQUAL=$arg                                     if $opt eq 'q';
     ($SELECTFILE,$SUBSTRINGS)=($arg,($SUBSTRINGS|1)) if $opt eq 'H';
     ($SELECTFILE,$SUBSTRINGS)=($arg,($SUBSTRINGS|2)) if $opt eq 'S';
@@ -209,6 +217,12 @@ if (!$INTERACTIVE) {
     }
     if ($OUTPUTFIXDATA && !$INQUAL) {
         print STDERR "Quality file needed to use -F option.\n"; exit 0;
+    }
+    if ($OUTFASTA eq '-' && $OUTDIR) {
+        print STDERR "Option -s is only available if -o is not '-'.\n"; exit 0;
+    }
+    if (-d $OUTDIR && (!-w ($OUTDIR))) {
+       print STDERR "The path to where yours outputfiles will be produced is not writable by you ($OUTDIR).\nPlease resolve this problem before running again\n"; exit 0;
     }
 }
 
@@ -246,6 +260,8 @@ else {
 my $PIRMASTER = PirObject::Masterfile->ObjectFromMasterfile($INFASTA);
 &FilterSeqsWhithAnnot($PIRMASTER,$SELECT,$OUTFASTA);
 }
+
+&SplitFastaOutput($OUTFASTA) if $OUTDIR;
 
 exit 0;
 
@@ -653,5 +669,36 @@ sub FilterSeqsWhithAnnot {
               "\n",
               "All Done.";
     }
+}
+
+sub SplitFastaOutput {
+  my ($full_fasta) = @_;
+  
+  unless(-d $OUTDIR) { mkdir $OUTDIR or die "Cannot create '$OUTDIR'";}
+  # read mf and split 
+  
+  my $pirmaster = PirObject::Masterfile->ObjectFromMasterfile($full_fasta,1);
+  my $contigs   = $pirmaster->get_contigs();
+  foreach my $contig (@$contigs) {
+     my $name = $contig->get_name();
+     my $name_comment = $contig->get_namecomments();
+     my $output_name = $name;
+        $output_name .= $name_comment if $name_comment; 
+        $output_name =~ s/\s+/_/g;
+        $output_name = "$OUTDIR/$output_name";
+     my $new_pirmaster = new PirObject::Masterfile;
+     $new_pirmaster->set_contigs([$contig]);
+     $new_pirmaster->set_filename("$output_name");
+     if (!-e $output_name){
+       $new_pirmaster->ObjectToMasterfile("$output_name");
+       print "File $output_name was created.\n"
+     }
+     else {
+       print "File '$output_name' already exist.\n";
+     }
+  }
+  
+  
+  
 }
 
