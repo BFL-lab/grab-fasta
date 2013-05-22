@@ -19,9 +19,12 @@
 #                                                                            #
 ##############################################################################
 #
-#    $Id: grab-fasta,v 1.9 2013/03/05 09:20:30 nbeck Exp $
+#    $Id: grab-fasta,v 1.10 2013/05/22 19:28:51 nbeck Exp $
 #
 #    $Log: grab-fasta,v $
+#    Revision 1.10  2013/05/22 19:28:51  nbeck
+#    Fixed bug for quality file.
+#
 #    Revision 1.9  2013/03/05 09:20:30  nbeck
 #    Added split option.
 #
@@ -70,7 +73,7 @@ PirObject->LoadDataModel("Masterfile");               # Masterfile object
 umask 027;
 
 # Program's name and version number.
-$RCS_VERSION='$Id: grab-fasta,v 1.9 2013/03/05 09:20:30 nbeck Exp $';
+$RCS_VERSION='$Id: grab-fasta,v 1.10 2013/05/22 19:28:51 nbeck Exp $';
 ($VERSION) = ($RCS_VERSION =~ m#,v ([\w\.]+)#);
 my ($BASENAME) = ($0 =~ /([^\/]+)$/);
 
@@ -535,7 +538,7 @@ sub CheckFastaQualCorrespondance
             or die "Can't read from input FASTA file '$infasta': $!\n";
     my $qfh = new IO::File "<$inqual"
             or die "Can't read from input Quality file '$inqual': $!\n";
-    my ($numberOfFastaSeq,$numberOfQualSeq) = 0;
+    my ($numberOfFastaSeq,$numberOfQualSeq) = (0,0) ;
     my ($test,$header,@headerDifferent);
     my ($Quali,$Fasta,$finalFasta,$finalQuali) = ();
     while (my $lineFasta = <$ffh>) #For each line, if we have a ">......" we create a $Fasta->{header}, 
@@ -555,7 +558,7 @@ sub CheckFastaQualCorrespondance
     }
     while (my $lineQuali = <$qfh>) #same as precedent while but with quality file
     {
-        if ($lineQuali =~ m#^>\s*(.*\S)\s*$#)
+        if ($lineQuali =~ m#^@\s*(.*\S)\s*$#)
         {
             $header = ">$1";
             $numberOfQualSeq++;
