@@ -19,9 +19,12 @@
 #                                                                            #
 ##############################################################################
 #
-#    $Id: grab-fasta,v 1.11 2013/08/26 02:15:00 nbeck Exp $
+#    $Id: grab-fasta,v 1.12 2013/09/03 02:15:32 nbeck Exp $
 #
 #    $Log: grab-fasta,v $
+#    Revision 1.12  2013/09/03 02:15:32  nbeck
+#    Added split option for fastq file.
+#
 #    Revision 1.11  2013/08/26 02:15:00  nbeck
 #    Added ability to work only with quality file.
 #
@@ -76,7 +79,7 @@ PirObject->LoadDataModel("Masterfile");               # Masterfile object
 umask 027;
 
 # Program's name and version number.
-$RCS_VERSION='$Id: grab-fasta,v 1.11 2013/08/26 02:15:00 nbeck Exp $';
+$RCS_VERSION='$Id: grab-fasta,v 1.12 2013/09/03 02:15:32 nbeck Exp $';
 ($VERSION) = ($RCS_VERSION =~ m#,v ([\w\.]+)#);
 my ($BASENAME) = ($0 =~ /([^\/]+)$/);
 
@@ -268,7 +271,10 @@ my $PIRMASTER = PirObject::Masterfile->ObjectFromMasterfile($INFASTA);
 &FilterSeqsWhithAnnot($PIRMASTER,$SELECT,$OUTFASTA);
 }
 
-&SplitFastaOutput($OUTFASTA) if $OUTDIR;
+if ($OUTDIR) {
+  &SplitFastaOutput($OUTFASTA) if $OUTFASTA;
+  &SplitFastqOutput($OUTQUAL) if $OUTQUAL;
+}
 
 exit 0;
 
@@ -728,8 +734,49 @@ sub SplitFastaOutput {
        print "File '$output_name' already exist.\n";
      }
   }
+}
+
+sub SplitFastqOutput {
+  my ($full_fastq) = @_;
   
+  unless (-d $OUTDIR) { mkdir $OUTDIR or die "Cannot create '$OUTDIR'";}
   
+  # Read quality file
+  my $ffhq = new IO::File "<$full_fastq"
+            or die "Can't read from input QUALITY file '$full_fastq': $!\n";
   
+  my $outname_seq    = {};
+  my $current_header = "";
+  while (my $line = <$ffhq>) {
+    if ($line =~ m#^@\s*(.*\S)\s*$#) {
+      my @each_chain = split (/\s+/,$1);
+      $current_header = $each_chain[0];
+      $outname_seq->{$current_header} = $line;
+    }
+    else {
+      my $beginning_string = $outname_seq->{$current_header};
+      $outname_seq->{$current_header} = "${beginning_string}${line}";
+    }
+  }
+  $ffhq->close();
+  
+  # Write each file.
+  foreach my $header (keys %$outname_seq) {
+    my $output_name = $header;
+       $output_name =~ s/:/_/g;
+       $output_name = "${OUTDIR}/${output_name}";
+
+       
+     if (!-e $output_name){
+       my $ofh = new IO::File ">$output_name"
+            or die "Can't write to output FASTQ file '$output_name': $!\n";
+       print $ofh $outname_seq->{$header};
+       $ofh->close();
+       print "File $output_name was created.\n"
+     }
+     else {
+       print "File '$output_name' already exist.\n";
+     }
+  }
 }
 
