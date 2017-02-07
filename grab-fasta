@@ -9,60 +9,6 @@
 #
 ##############################################################################
 
-##############################################################################
-#                                                                            #
-#                       CONFIDENTIAL & PROPRIETARY                           #
-#       Nothing herein is to be disclosed in any way without the prior       #
-#                 express written permission of BioneQ                       #
-#                                                                            #
-#          Copyright 2005 Pierre Rioux, All rights reserved.                 #
-#                                                                            #
-##############################################################################
-#
-#    $Id: grab-fasta,v 1.12 2013/09/03 02:15:32 nbeck Exp $
-#
-#    $Log: grab-fasta,v $
-#    Revision 1.12  2013/09/03 02:15:32  nbeck
-#    Added split option for fastq file.
-#
-#    Revision 1.11  2013/08/26 02:15:00  nbeck
-#    Added ability to work only with quality file.
-#
-#    Revision 1.10  2013/05/22 19:28:51  nbeck
-#    Fixed bug for quality file.
-#
-#    Revision 1.9  2013/03/05 09:20:30  nbeck
-#    Added split option.
-#
-#    Revision 1.8  2010/05/25 20:41:03  nbeck
-#    Added info in Usage.
-#
-#    Revision 1.7  2010/02/09 21:10:37  sprigent
-#    Add support for quality files.
-#
-#    Revision 1.6  2009/10/16 16:46:54  nbeck
-#    Added usage for -A.
-#
-#    Revision 1.5  2009/10/16 16:42:37  nbeck
-#    Added option for annotation or sequence.
-#
-#    Revision 1.4  2009/08/24 21:12:10  nbeck
-#    Added -P option.
-#
-#    Revision 1.3  2009/08/24 15:18:36  nbeck
-#    Added -K Option.
-#
-#    Revision 1.2  2008/09/08 21:33:51  riouxp
-#    Added support for -X option.
-#
-#    Revision 1.1  2008/09/08 21:01:36  riouxp
-#    Added to CVS.
-#
-#    Revision 1.1  2006/01/13 18:14:28  riouxp
-#    New utility fro Franz.
-#
-#
-
 ##########################
 # Initialization section #
 ##########################
@@ -105,7 +51,7 @@ my $OUTPUTFIXDATA="";
 # Definition of special selection routines;
 # The first arg is always the full header line
 # Supplemental args are constants supplied on the command-line
-# with "special,arg1,arg2" 
+# with "special,arg1,arg2"
 
 my %SPECIAL = (
     # With "-X lenreads,22,33", we select seqs with length >= 22 and numread >= 33
@@ -149,7 +95,7 @@ sub Usage {
                  "                        A quality file based on the outfasta name will be created if -q and -f are used\n",
                  "       -s directory     Each result is stored in an output file inside a directory,\n",
                  "                        this option is only available if -o is not '-'\n",
-                 "\n", 
+                 "\n",
                  "you may specify -F if -f and -q is set\n",
                  "\n",
                  "       -F missingdata   is an output file containing headers of sequences that are\n",
@@ -202,7 +148,7 @@ for (;@ARGV;) {
     ($PATTERN,$SUBSTRINGS)   =($arg,($SUBSTRINGS|5)) if $opt eq 'P';
     ($SELECTFILE,$SUBSTRINGS)=($arg,($SUBSTRINGS|6)) if $opt eq 'A';
     $OUTPUTFIXDATA=$arg                              if $opt eq 'F';
-    
+
     shift @ARGV;
 }
 
@@ -264,7 +210,7 @@ if ($SUBSTRINGS != 6) {
     }
     else {
         &FilterSeqs($INFASTA,$OUTFASTA,$SELECT,$SUBSTRINGS);
-    }                              
+    }
 }
 else {
 my $PIRMASTER = PirObject::Masterfile->ObjectFromMasterfile($INFASTA);
@@ -298,7 +244,7 @@ sub AskQuestions {
           "        containing only the sequences that matches the list (2)\n",
           "        eventually the corresponding quality file, if an input\n",
           "        quality file is given.\n\n";
-          
+
     print "There is also an option -X to select sequences based on special\n",
           "conditions, but it's not supported interactively.\n\n";
 
@@ -308,16 +254,16 @@ sub AskQuestions {
     print "\nNo FASTA file input, continue" if !defined($INFASTA);
     chomp $INFASTA if $INFASTA;
     print "\n";
-    
+
     print "(2) Enter the name of your input quality file if you want to use one: ";
     $INQUAL = <STDIN>;
     $INQUAL = undef if $INQUAL =~ m#^\s*$#;
     print "\nNo quality file input, continue" if !defined($INQUAL);
     chomp $INQUAL if $INQUAL;
     print "\n";
-    
+
     die "\nYou should at least choose one FASTA file or one quality file, exiting!\n" if !defined($INFASTA) && !defined($INQUAL);
-    
+
     if ($INQUAL && $INFASTA){
         print "    Enter the name of an output file comparing FASTA and quality headers if you want to use one: ";
         $OUTPUTFIXDATA = <STDIN>;
@@ -380,7 +326,7 @@ sub ReadSelectStrings {
         $lfh = new IO::File "<$file"
         or die "Can't open selection list file '$file': $!\n";
     }
-    
+
     while (my $line = <$lfh>) {
         $line =~ s/^>// if $mode == 1;
         $line =~ s/^\s*//;
@@ -397,30 +343,30 @@ sub ReadSelectStrings {
 sub FilterSeqs {
     my ($infasta,$outfasta,$select,$mode,$inqual,$outqual) = @_;
 
-    my ($printQual,$seenQual,$printedQual,$printFasta,$seenFasta,$printedFasta,$numberOfDifference,$numberOfCorrespondance,$totalFasta,$totalQuali) = 
+    my ($printQual,$seenQual,$printedQual,$printFasta,$seenFasta,$printedFasta,$numberOfDifference,$numberOfCorrespondance,$totalFasta,$totalQuali) =
         (0,0,0,0,0,0,0,0,0,0);
-    
+
     if (!$inqual)
     {
     	my $ffh = new IO::File "<$infasta"
             or die "Can't read from input FASTA file '$infasta': $!\n";
         my $ofh = new IO::File ">$outfasta"
             or die "Can't write to output FASTA file '$outfasta': $!\n";
-        while (my $line = <$ffh>) 
+        while (my $line = <$ffh>)
         {
             ($printFasta,$seenFasta,$printedFasta) = &FilterFile($line,$ofh,$select,$mode,$printFasta,$seenFasta,$printedFasta);
         }
         $ffh->close();
         $ofh->close();
     }
-    
-    elsif (!$infasta) 
+
+    elsif (!$infasta)
     {
         my $ffhq = new IO::File "<$inqual"
             or die "Can't read from input QUALITY file '$inqual': $!\n";
         my $ofhq = new IO::File ">$outqual"
             or die "Can't write to output QUALITY file '$outqual': $!\n";
-    	while (my $line = <$ffhq>) 
+    	while (my $line = <$ffhq>)
         {
             ($printQual,$seenQual,$printedQual) = &FilterFile($line,$ofhq,$select,$mode,$printQual,$seenQual,$printedQual);
         }
@@ -440,8 +386,8 @@ sub FilterSeqs {
         foreach (keys %{$finalFasta})
         {
             $lineFastaHead = $_;
-            ($printFasta,$seenFasta,$printedFasta)     = &FilterFile($lineFastaHead,$ofh,$select,$mode,$printFasta,$seenFasta,$printedFasta); 
-            foreach ($finalFasta->{$lineFastaHead}) 
+            ($printFasta,$seenFasta,$printedFasta)     = &FilterFile($lineFastaHead,$ofh,$select,$mode,$printFasta,$seenFasta,$printedFasta);
+            foreach ($finalFasta->{$lineFastaHead})
             {
                 $lineFasta = $_;
                 ($printFasta,$seenFasta,$printedFasta) = &FilterFile($lineFasta,$ofh,$select,$mode,$printFasta,$seenFasta,$printedFasta);
@@ -451,8 +397,8 @@ sub FilterSeqs {
         foreach (keys %{$finalQuali})
         {
             $lineQualHead = $_;
-            ($printQual,$seenQual,$printedQual) = &FilterFile($lineQualHead,$ofhq,$select,$mode,$printQual,$seenQual,$printedQual); 
-            foreach ($finalQuali->{$lineQualHead}) 
+            ($printQual,$seenQual,$printedQual) = &FilterFile($lineQualHead,$ofhq,$select,$mode,$printQual,$seenQual,$printedQual);
+            foreach ($finalQuali->{$lineQualHead})
             {
                 $lineQual = $_;
                 ($printQual,$seenQual,$printedQual) = &FilterFile($lineQual,$ofhq,$select,$mode,$printQual,$seenQual,$printedQual);
@@ -462,9 +408,9 @@ sub FilterSeqs {
         $ofh->close();
         $ofhq->close();
     }
-    
 
-    
+
+
     my $listtot  = $mode < 3 ? scalar(keys %$select) : 0;
     my $listseen = $mode < 3 ? scalar(grep($_ >= 1, values %$select)) : 0;
 
@@ -523,7 +469,7 @@ sub FilterFile {
         } elsif ($mode == 4) { # special code selection
             $print = &$select($line,@SPECIAL_ARGS); # return true/false
             $printed++ if $print;
-        } 
+        }
         elsif ($mode == 3 || $mode == 5) {
             my @keys = ();
             $print   = 0;
@@ -543,7 +489,7 @@ sub FilterFile {
     }
     return ($print,$seen,$printed) unless $print;
     print $ofh $line;
-    
+
     return ($print,$seen,$printed);
 }
 
@@ -552,7 +498,7 @@ sub CheckFastaQualCorrespondance
 {
     ############################################################################################
     #This subroutine will check if fasta file and quality file have the same
-    #headers 
+    #headers
     #Take in argument a fasta file and a quality file (same structure as fasta files)
     #and return, in this order : return ($finalFasta, $finalQuali, $numberOfCorrespondance, $numberOfDifference,$numberOfFastaSeq,$numberOfQualSeq);
     #  - a Hash containing all fasta sequences which have headers also presents in the quality file
@@ -575,7 +521,7 @@ sub CheckFastaQualCorrespondance
     my ($numberOfFastaSeq,$numberOfQualSeq) = (0,0) ;
     my ($test,$header,@headerDifferent);
     my ($Quali,$Fasta,$finalFasta,$finalQuali) = ();
-    while (my $lineFasta = <$ffh>) #For each line, if we have a ">......" we create a $Fasta->{header}, 
+    while (my $lineFasta = <$ffh>) #For each line, if we have a ">......" we create a $Fasta->{header},
                                    #else we populate the last Fasta->{header} with the sequence
     {
         if ($lineFasta =~ m#^>\s*(.*\S)\s*$#)
@@ -588,7 +534,7 @@ sub CheckFastaQualCorrespondance
             $Fasta->{$header} = $Fasta->{$header}.$lineFasta if exists($Fasta->{$header});
             $Fasta->{$header} = $lineFasta if !exists($Fasta->{$header});
         }
-        
+
     }
     while (my $lineQuali = <$qfh>) #same as precedent while but with quality file
     {
@@ -603,7 +549,7 @@ sub CheckFastaQualCorrespondance
             $Quali->{$header} = $lineQuali if !exists($Quali->{$header});
         }
     }
-      
+
     #now take all sequences from FASTA file and we check if they are present in the $Quali
     #If they are present in both files, we put them in a $finalFasta and $finalQuali hashes
     #            $finalFasta->{header}->{sequence}
@@ -621,10 +567,10 @@ sub CheckFastaQualCorrespondance
             push (@headerDifferent, $headFas) if !$test &&  $OUTPUTFIXDATA;
         }
     }
-    
+
     my $numberOfCorrespondance = scalar keys %{$finalQuali};
     my $numberOfDifference = ($numberOfFastaSeq - $numberOfCorrespondance) + ($numberOfQualSeq - $numberOfCorrespondance);
-    
+
     if($numberOfDifference != 0 && $OUTPUTFIXDATA) #if the -F option is used, we also check in the quality file if there is some
                                                    #sequences not present in the fasta file and we put them in the array
     {
@@ -638,12 +584,12 @@ sub CheckFastaQualCorrespondance
                 push (@headerDifferent, $headQual) if !(exists($Fasta->{$headQual}));
             }
         }
-        my $fixData = new IO::File ">$OUTPUTFIXDATA" 
+        my $fixData = new IO::File ">$OUTPUTFIXDATA"
             or die "Can't in the fixdata file '$OUTPUTFIXDATA': $!\n";
         foreach(@headerDifferent) {print $fixData "$_ \n";}
         $fixData->close();
         $qfh2->close();
-    } 
+    }
     die "\nFasta and Quality files are totally different, any headers are the sames\n\n" if $numberOfCorrespondance == 0;
     $qfh->close();
     $ffh->close();
@@ -654,16 +600,16 @@ sub CheckFastaQualCorrespondance
 
 sub FilterSeqsWhithAnnot {
     my ($pirmaster,$select,$outfasta) = @_;
-    
+
     my $new_pirmaster = new PirObject::Masterfile();
     my $new_contigs   = ();
     my $contigs = $pirmaster->get_contigs();
     my $list_of_added_contig = {};
-    
+
     foreach my $substring (keys %$select) {
         foreach my $contig (@$contigs) {
             next if $list_of_added_contig->{scalar($contig)}; #contig already added
-            
+
             my $annotations = $contig->get_annotations();
             my $sequence    = $contig->get_sequence();
             if ($sequence =~ m/$substring/i) {
@@ -671,10 +617,10 @@ sub FilterSeqsWhithAnnot {
                 $list_of_added_contig->{scalar($contig)}++;
                 next;
             }
-            
+
             foreach my $annot (@$annotations) {
                 next if $list_of_added_contig->{scalar($contig)}; #contig already added
-                
+
                 my $startline = $annot->get_startline();
                 if ($startline && $startline =~ m/$substring/i) {
                     push (@$new_contigs,$contig);
@@ -690,10 +636,10 @@ sub FilterSeqsWhithAnnot {
             }
         }
     }
-    
+
     $new_pirmaster->set_contigs($new_contigs);
     $new_pirmaster->ObjectToMasterfile("$outfasta");
-    
+
     # Print stats only of output is not STDOUT.
     my $seen    = scalar(@$contigs);
     my $printed = !$new_contigs ? 0 : scalar(@$new_contigs);
@@ -710,17 +656,17 @@ sub FilterSeqsWhithAnnot {
 
 sub SplitFastaOutput {
   my ($full_fasta) = @_;
-  
+
   unless(-d $OUTDIR) { mkdir $OUTDIR or die "Cannot create '$OUTDIR'";}
-  # read mf and split 
-  
+  # read mf and split
+
   my $pirmaster = PirObject::Masterfile->ObjectFromMasterfile($full_fasta,1);
   my $contigs   = $pirmaster->get_contigs();
   foreach my $contig (@$contigs) {
      my $name = $contig->get_name();
      my $name_comment = $contig->get_namecomments();
      my $output_name = $name;
-        $output_name .= $name_comment if $name_comment; 
+        $output_name .= $name_comment if $name_comment;
         $output_name =~ s/\s+/_/g;
         $output_name = "$OUTDIR/$output_name";
      my $new_pirmaster = new PirObject::Masterfile;
@@ -738,13 +684,13 @@ sub SplitFastaOutput {
 
 sub SplitFastqOutput {
   my ($full_fastq) = @_;
-  
+
   unless (-d $OUTDIR) { mkdir $OUTDIR or die "Cannot create '$OUTDIR'";}
-  
+
   # Read quality file
   my $ffhq = new IO::File "<$full_fastq"
             or die "Can't read from input QUALITY file '$full_fastq': $!\n";
-  
+
   my $outname_seq    = {};
   my $current_header = "";
   while (my $line = <$ffhq>) {
@@ -759,14 +705,14 @@ sub SplitFastqOutput {
     }
   }
   $ffhq->close();
-  
+
   # Write each file.
   foreach my $header (keys %$outname_seq) {
     my $output_name = $header;
        $output_name =~ s/:/_/g;
        $output_name = "${OUTDIR}/${output_name}";
 
-       
+
      if (!-e $output_name){
        my $ofh = new IO::File ">$output_name"
             or die "Can't write to output FASTQ file '$output_name': $!\n";

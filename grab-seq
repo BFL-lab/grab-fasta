@@ -11,46 +11,6 @@
 #
 ##############################################################################
 
-##############################################################################
-#                                                                            #
-#                       CONFIDENTIAL & PROPRIETARY                           #
-#       Nothing herein is to be disclosed in any way without the prior       #
-#                 express written permission of BioneQ                       #
-#                                                                            #
-#          Copyright 2005 Pierre Rioux, All rights reserved.                 #
-#                                                                            #
-##############################################################################
-#
-#    $Id: grab-seq,v 1.7 2010/08/27 18:35:21 nbeck Exp $
-#
-#    $Log: grab-seq,v $
-#    Revision 1.7  2010/08/27 18:35:21  nbeck
-#    Added support for MF, removed line with ";".
-#
-#    Revision 1.6  2009/02/19 19:36:22  nbeck
-#    Added option -f used in order to extract all the fasta block in which
-#    the query was found.
-#
-#    Revision 1.5  2007/05/08 21:00:58  riouxp
-#    Now supports supplying the query sequence directly on the
-#    command-line, using -q (it autodetects whether it's a file
-#    or the seq itself).
-#
-#    Revision 1.4  2007/05/08 16:56:49  riouxp
-#    Fixed detection of overlapping patterns.
-#    Added option -c to allow lowercase/uppercase in output.
-#
-#    Revision 1.3  2007/05/08 00:18:20  riouxp
-#    Fixed processing of -b and -a.
-#
-#    Revision 1.2  2007/05/08 00:07:34  riouxp
-#    Fixed option -o; improved output in debug mode; performance
-#    improvements using empirical tests for blocking factor.
-#
-#    Revision 1.1  2007/05/07 17:18:41  riouxp
-#    New utility.
-#
-
 ##########################
 # Initialization section #
 ##########################
@@ -98,7 +58,7 @@ sub Usage {
 $BASENAME $VERSION
 
 Usage: $BASENAME [-b beforelen] [-a afterlen] [-f] [-o outfile] -q queryfile file1 file2 file3...
-      
+
 where
        -b len : is the length of the 5' flanking region (mnemo: [B]efore; default: 0)
        -a len : is the length of the 3' flanking region (mnemo: [A]fter; default: 0)
@@ -183,7 +143,7 @@ my ($query,$revquery) = &ReadQuerySeq($QUERYFILE);
 my $TOTLEN = length($query) + $BEFORE + $AFTER;
 my $OUTFH = new IO::File ">$OUTFILE"
     or die "Cannot write to output file '$OUTFILE': $!\n";
-    
+
 if (($BISDEFBYUSER || $AISDEFBYUSER) && $ALL == 1) {
     print STDOUT ";; !!!! -a and -b options are not considered because -f is set !!!!\n";
     print $OUTFH ";; !!!! -a and -b options are not considered because -f is set !!!!\n" if $OUTFILE ne "-";
