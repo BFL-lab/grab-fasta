@@ -4,13 +4,13 @@
 - `grab-seq` scans one or many FASTA target files, and extract all regions that matches exactly a query sequence, with optionally flanking regions too.
 
 
-This package is based on activities of the [OGMP](http://megasun.bch.umontreal.ca/ogmp/) (i.e, priori to 2002), and
+This package is based on activities of the [OGMP](http://megasun.bch.umontreal.ca/ogmp/) (i.e, prior to 2002), and
 becomes open source as part of [MFannot](http://megasun.bch.umontreal.ca/RNAweasel/).
 
 ## Install
 
-- To install grab-fasta you just need to copy the `grab-fasta` file in one of your executable directory (e.g: a directory list in $PATH). 
-- To install grab-seq you just need to copy the `grab-seq` file in one of your executable directory (e.g: a directory list in $PATH).
+- To install grab-fasta you just need to copy the `grab-fasta` file in one of your executable directories (e.g: a directory list in $PATH). 
+- To install grab-seq you just need to copy the `grab-seq` file in one of your executable directories (e.g: a directory list in $PATH).
 
 **Note**: At this point the installation of grab-fasta was only tested on Unix system (Ubuntu and CentOS).
 
